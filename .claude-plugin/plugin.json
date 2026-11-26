@@ -1,0 +1,11 @@
+{
+  "name": "kaggle-offload",
+  "version": "1.0.0",
+  "description": "Run heavy AI jobs on Kaggle's free GPUs when your own machine can't, and see exactly what you use.",
+  "author": { "name": "fracabu" },
+  "homepage": "https://github.com/fracabu/kaggle-offload",
+  "repository": "https://github.com/fracabu/kaggle-offload",
+  "license": "MIT",
+  "keywords": ["kaggle", "gpu", "offload", "tts", "whisper", "quota"],
+  "skills": ["."]
+}

@@ -19,7 +19,7 @@ when_to_use: >-
 # kaggle-offload
 
 The tool is `scripts/ko.py` (Python standard library only, plus the Kaggle CLI). Below, `KO` means
-`python ~/.claude/skills/kaggle-offload/scripts/ko.py`. Data (run ledger, quota, credits, benchmarks,
+`python "${CLAUDE_SKILL_DIR}/scripts/ko.py"`. Data (run ledger, quota, credits, benchmarks,
 cache, queue) lives in `~/.kaggle-offload/`, never in the skill folder. Talk to the user in their
 language; Italian command names (`decidi`, `coda`, `crediti`, `apri`) also work.
 

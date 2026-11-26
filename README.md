@@ -55,16 +55,26 @@ Jobs are pushed as private Kaggle kernels through the official Kaggle CLI. Your 
 
 You need Python 3 and a Kaggle account. `ko.py` uses only the standard library plus the Kaggle CLI.
 
+**As a plugin** (Claude Code 2.1.275 or later), in a Claude Code session:
+
+```
+/plugin install kaggle-offload --marketplace fracabu/green-compute
+```
+
+It comes from the [green-compute](https://github.com/fracabu/green-compute) marketplace, which also bundles kaggle-offload with [token-diet](https://github.com/fracabu/token-diet) and [or-switch](https://github.com/fracabu/or-switch). Choose the user scope to have it in every project: until a job calls for it, it costs only its one-paragraph description in the context.
+
+**Or as a personal skill**, with git:
+
 ```bash
 git clone https://github.com/fracabu/kaggle-offload ~/.claude/skills/kaggle-offload
-pip install kaggle
 ```
 
 Then, once:
 
-1. Sign up at [kaggle.com](https://www.kaggle.com) and **verify your phone number** in your account settings. Without it, GPUs and internet access stay off in notebooks.
-2. In your account settings, create an API token and place it where Kaggle tells you (`~/.kaggle/`).
-3. Run `python ~/.claude/skills/kaggle-offload/scripts/ko.py setup`. If it answers `"ready": true`, you're set.
+1. `pip install kaggle`.
+2. Sign up at [kaggle.com](https://www.kaggle.com) and **verify your phone number** in your account settings. Without it, GPUs and internet access stay off in notebooks.
+3. In your account settings, create an API token and place it where Kaggle tells you (`~/.kaggle/`).
+4. Ask Claude *"is kaggle-offload ready?"*, or run `python scripts/ko.py setup` from the skill's folder. If it answers `"ready": true`, you're set.
 
 Tested on Windows 11. The code is meant to work on macOS and Linux too, but it hasn't been tested there yet: if you try it, please open an issue.
 
