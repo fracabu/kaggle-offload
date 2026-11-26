@@ -1,0 +1,6 @@
+{
+ "descrizione": "Costruisce la cache (wheel pip mancanti e pesi Hugging Face) di un altro template, in sola CPU",
+ "acc": "cpu",
+ "unita": null,
+ "collaudato": false
+}

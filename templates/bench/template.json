@@ -1,0 +1,6 @@
+{
+ "descrizione": "Benchmark GFLOPS: moltiplicazioni di matrici fp32 su CPU, fp32 e fp16 su GPU",
+ "acc": "gpu",
+ "unita": null,
+ "collaudato": false
+}
