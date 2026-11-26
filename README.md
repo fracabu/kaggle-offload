@@ -9,7 +9,7 @@ A skill for [Claude Code](https://claude.com/claude-code) · about 30 free GPU h
 [![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f)](LICENSE)
 ![Python 3](https://img.shields.io/badge/python-3-3776ab)
 ![Claude Code skill](https://img.shields.io/badge/Claude%20Code-skill-d97757)
-![Kaggle T4](https://img.shields.io/badge/Kaggle-Tesla%20T4-20beff)
+![Kaggle T4](https://img.shields.io/badge/Kaggle-Tesla_T4-20beff)
 
 [Quick start](#quick-start) · [How it works](#how-it-works) · [Templates](#templates) · [Contributing](CONTRIBUTING.md)
 
