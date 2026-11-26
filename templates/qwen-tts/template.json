@@ -1,10 +1,10 @@
 {
- "descrizione": "Qwen3-TTS 1.7B: voci create da una descrizione e cloni, tutti in un solo lancio",
+ "description": "Qwen3-TTS 1.7B: voices designed from a description, and clones, all in a single run",
  "acc": "gpu",
  "vram_gb": 8,
- "unita": "secondi di audio",
+ "unit": "seconds of audio",
  "cache_pip": ["qwen-tts"],
  "cache_hf": ["Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign", "Qwen/Qwen3-TTS-12Hz-1.7B-Base"],
- "collaudato": true,
- "origine": "prova del 26/11/2026: 6 audio in 5 min 20 s su T4, 97 s di preparazione; con la cache, stesso lotto in 4 min 21 s e 71 s di preparazione"
+ "tested": true,
+ "origin": "test of 26 Nov 2026: 6 audio clips in 5 min 20 s on a T4, 97 s of preparation; with the cache, the same batch in 4 min 21 s and 71 s of preparation"
 }

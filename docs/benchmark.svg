@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="840" height="300" viewBox="0 0 840 300" role="img" aria-labelledby="t d">
+  <title id="t">Same benchmark, laptop vs Kaggle</title>
+  <desc id="d">Matrix multiplication speed relative to a laptop without an NVIDIA GPU: laptop 1x, Kaggle CPU 2.6x, Kaggle T4 GPU fp32 66x, Kaggle T4 GPU fp16 405x.</desc>
+  <style>
+    :root { --bg: #ffffff; --card: #f6f8fa; --ink: #1f2328; --muted: #59636e; --track: #e6e9ed; --cpu: #8c959f; --gpu: #f26a10; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #0d1117; --card: #151b23; --ink: #e6edf3; --muted: #9198a1; --track: #262c36; --cpu: #6e7681; --gpu: #ff7a1f; }
+    }
+    .card { fill: var(--card); stroke: var(--track); }
+    text { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: var(--ink); }
+    .title { font-size: 17px; font-weight: 600; }
+    .sub { font-size: 13px; fill: var(--muted); }
+    .label { font-size: 14px; }
+    .detail { font-size: 12px; fill: var(--muted); }
+    .val { font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 15px; font-weight: 600; }
+    .big { font-size: 22px; fill: var(--gpu); }
+    .track { fill: var(--track); }
+    .cpu { fill: var(--cpu); }
+    .gpu { fill: var(--gpu); }
+    /* one 9 s cycle: bars grow one after the other, hold, fade, start again */
+    .bar { transform-box: fill-box; transform-origin: left center; transform: scaleX(0); animation: grow 9s cubic-bezier(.2,.8,.2,1) infinite; }
+    .v { opacity: 0; animation: show 9s ease-out infinite; }
+    .r1 { animation-delay: 0s; } .r2 { animation-delay: .35s; } .r3 { animation-delay: .7s; } .r4 { animation-delay: 1.05s; }
+    @keyframes grow { 0% { transform: scaleX(0); } 14% { transform: scaleX(1); } 90% { transform: scaleX(1); opacity: 1; } 97%, 100% { transform: scaleX(1); opacity: 0; } }
+    @keyframes show { 0%, 9% { opacity: 0; } 15% { opacity: 1; } 90% { opacity: 1; } 97%, 100% { opacity: 0; } }
+    @media (prefers-reduced-motion: reduce) { .bar { animation: none; transform: scaleX(1); } .v { animation: none; opacity: 1; } }
+  </style>
+  <rect class="card" x="0.5" y="0.5" width="839" height="299" rx="12"/>
+  <text class="title" x="28" y="40">Same benchmark, how many times faster than my laptop</text>
+  <text class="sub" x="28" y="62">Matrix multiplication, measured with ko.py bench · bars to scale</text>
+
+  <!-- row 1: laptop 1x -->
+  <text class="label" x="28" y="104">Laptop</text><text class="detail" x="28" y="121">Ryzen 5, no NVIDIA GPU</text>
+  <rect class="track" x="230" y="98" width="500" height="16" rx="4"/>
+  <rect class="bar cpu r1" x="230" y="98" width="4" height="16" rx="2"/>
+  <text class="val v r1" x="812" y="111" text-anchor="end">1×</text>
+
+  <!-- row 2: Kaggle CPU 2.6x -->
+  <text class="label" x="28" y="152">Kaggle, CPU only</text><text class="detail" x="28" y="169">4-core Xeon, no quota used</text>
+  <rect class="track" x="230" y="146" width="500" height="16" rx="4"/>
+  <rect class="bar cpu r2" x="230" y="146" width="5" height="16" rx="2"/>
+  <text class="val v r2" x="812" y="159" text-anchor="end">2.6×</text>
+
+  <!-- row 3: T4 fp32 66x -->
+  <text class="label" x="28" y="200">Kaggle GPU T4</text><text class="detail" x="28" y="217">full precision (fp32)</text>
+  <rect class="track" x="230" y="194" width="500" height="16" rx="4"/>
+  <rect class="bar gpu r3" x="230" y="194" width="81" height="16" rx="4"/>
+  <text class="val v r3" x="812" y="207" text-anchor="end">66×</text>
+
+  <!-- row 4: T4 fp16 405x -->
+  <text class="label" x="28" y="248">Kaggle GPU T4, AI models</text><text class="detail" x="28" y="265">half precision (fp16)</text>
+  <rect class="track" x="230" y="242" width="500" height="16" rx="4"/>
+  <rect class="bar gpu r4" x="230" y="242" width="500" height="16" rx="4"/>
+  <text class="val big v r4" x="812" y="257" text-anchor="end">405×</text>
+</svg>

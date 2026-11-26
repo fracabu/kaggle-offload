@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
-"""kaggle-offload: decide dove far girare un lavoro (PC, Kaggle in sola CPU, Kaggle con GPU/TPU,
-servizio a pagamento), lo lancia su Kaggle, misura consumi e velocita', tiene il conto dei crediti
-e serve la dashboard locale.
+"""kaggle-offload: decide where a job should run (the PC, Kaggle CPU-only, Kaggle with GPU/TPU, or a
+paid service), launch it on Kaggle, measure usage and speed, keep track of credits and serve the
+local dashboard.
 
-    python ko.py -h            elenco dei comandi
-    python ko.py apri          avvia la dashboard (se non gira gia') e la apre nel browser
+    python ko.py -h            list of commands
+    python ko.py open          start the dashboard (if it is not running) and open it in the browser
 
-I dati stanno in ~/.kaggle-offload (o in $KAGGLE_OFFLOAD_HOME), mai nella cartella della skill.
+Data lives in ~/.kaggle-offload (or in $KAGGLE_OFFLOAD_HOME), never inside the skill folder.
+
+Backward compatibility: the original Italian command names (decidi, coda, crediti, apri), their
+actions and flags still work, and data written by the Italian version is migrated on first run
+(see migrate_data_dir).
 """
 from __future__ import annotations
 
 import argparse
+import copy
 import ctypes
 import datetime as dt
 import json
@@ -33,32 +38,33 @@ TEMPLATES = SKILL / 'templates'
 DASHBOARD_HTML = SKILL / 'scripts' / 'dashboard.html'
 DATA = Path(os.environ.get('KAGGLE_OFFLOAD_HOME', Path.home() / '.kaggle-offload'))
 LEDGER = DATA / 'ledger.jsonl'
-INCORSO = DATA / 'in-corso.json'
-CREDITI = DATA / 'crediti.json'
+RUNNING = DATA / 'running.json'
+CREDITS = DATA / 'credits.json'
 BENCH = DATA / 'bench.json'
 CONFIG = DATA / 'config.json'
 CACHE = DATA / 'cache.json'
 QUOTA = DATA / 'quota.json'
 PROBE = DATA / 'probe.json'
-CODA = DATA / 'coda'
+QUEUE = DATA / 'queue'
 RUNS = DATA / 'runs'
+PORT_FILE = DATA / 'port.txt'
 
 DEFAULT_CONFIG = {
-    'porta': 8790,  # se e' occupata da un'altra app si passa alla prima libera
-    # Prezzo di riferimento per il "risparmio": quanto costerebbe la stessa ora di GPU a noleggio.
-    'prezzo_gpu_ora': 0.55,
-    'valuta': 'USD',
-    'fonte_prezzo': 'una T4 a consumo su Lightning AI, novembre 2026',
-    'cambio_eur': None,          # es. 0.9: se impostato la dashboard mostra anche gli euro
-    'elevenlabs_env_file': None,  # file .env con ELEVENLABS_API_KEY, per leggere i crediti in automatico
-    'soglia_scadenza_giorni': 5,
+    'port': 8790,  # if it is taken by another app, the first free one after it is used
+    # Reference price for the "savings" tile: what the same GPU hour would cost on a rented machine.
+    'gpu_price_per_hour': 0.55,
+    'currency': 'USD',
+    'price_source': 'an on-demand T4 on Lightning AI, November 2026',
+    'eur_rate': None,             # e.g. 0.9: if set, the dashboard also shows euros
+    'elevenlabs_env_file': None,  # .env file with ELEVENLABS_API_KEY, to read credits automatically
+    'expiry_warning_days': 5,
 }
-ACCELERATORI = {'gpu': 'NvidiaTeslaT4', 'tpu': 'TpuV5E8', 'cpu': None}
-FINALI = ('complete', 'error', 'cancel_acknowledged', 'cancel_requested', 'abbandonato')
+ACCELERATORS = {'gpu': 'NvidiaTeslaT4', 'tpu': 'TpuV5E8', 'cpu': None}
+FINAL_STATES = ('complete', 'error', 'cancel_acknowledged', 'cancel_requested', 'abandoned')
 _lock = threading.Lock()
 
 
-# ---------------------------------------------------------------- utilita'
+# ---------------------------------------------------------------- utilities
 
 def now():
     return dt.datetime.now().astimezone()
@@ -83,21 +89,277 @@ def save_json(p, obj):
     os.replace(tmp, p)
 
 
-def config():
-    c = dict(DEFAULT_CONFIG)
-    c.update(load_json(CONFIG, {}))
+def show(obj):
+    print(json.dumps(obj, indent=1, ensure_ascii=False))
+
+
+# ---------------------------------------------------------------- old (Italian) data -> English
+# Everything the Italian version wrote is read through these normalizers, so old and new records look
+# the same everywhere (dashboard included). They are idempotent: English data passes through unchanged.
+
+def _ren(d, mapping):
+    """Copy of dict d with keys renamed. If the new key is already there, it wins."""
+    if not isinstance(d, dict):
+        return d
+    return {mapping.get(k, k): v for k, v in d.items() if not (k in mapping and mapping[k] in d)}
+
+
+def _tr(value, table):
+    return table.get(value, value) if isinstance(value, str) else value
+
+
+def _jobs_n(n):
+    return f'{n} job' + ('' if n == 1 else 's')
+
+
+METRIC_KEYS = {'preparazione_s': 'prep_s', 'calcolo_s': 'compute_s', 'dispositivo': 'device',
+               'pacchetti': 'packages', 'lavori': 'jobs', 'carica_s': 'load_s', 'totale_s': 'total_s',
+               'pip_da': 'pip_from', 'prodotto': 'product', 'nome': 'name'}
+RUN_KEYS = {'progetto': 'project', 'descrizione': 'description', 'stato': 'status', 'push': 'pushed_at',
+            'fine': 'finished_at', 'attesa_s': 'wait_s', 'sessione_s': 'session_s', 'totale_s': 'total_s',
+            'consumo_h': 'quota_used_h', 'metriche': 'metrics', 'unita': 'unit',
+            'inizio_calcolo': 'compute_started_at', 'aggiornato': 'updated_at'}
+CREDIT_KEYS = {'servizio': 'service', 'residuo': 'remaining', 'totale': 'total', 'unita': 'unit',
+               'scadenza': 'expires', 'tipo_scadenza': 'expiry_type', 'nota': 'note', 'fonte': 'source',
+               'aggiornato': 'updated_at', 'errore': 'error'}
+CONFIG_KEYS = {'porta': 'port', 'prezzo_gpu_ora': 'gpu_price_per_hour', 'valuta': 'currency',
+               'fonte_prezzo': 'price_source', 'cambio_eur': 'eur_rate',
+               'soglia_scadenza_giorni': 'expiry_warning_days'}
+QUOTA_KEYS = {'usate': 'used', 'rimaste': 'remaining', 'totali': 'total', 'ricarica': 'refresh_at'}
+PROBE_KEYS = {'sistema': 'system', 'core': 'cores', 'gpu_nvidia': 'nvidia_gpus', 'altre_gpu': 'other_gpus',
+              'letto': 'read_at', 'cuda_locale': 'local_cuda'}
+BENCH_KEYS = {'nome': 'name', 'dettaglio': 'detail', 'misurato': 'measured_at', 'stato': 'status'}
+CACHE_KEYS = {'creata': 'created_at', 'metriche': 'metrics'}
+
+STATUS_VALUES = {'invio': 'sending', 'abbandonato': 'abandoned', 'scarico i risultati': 'downloading results',
+                 'leggo il log': 'reading log', 'sconosciuto': 'unknown'}
+UNIT_VALUES = {'secondi di audio': 'seconds of audio', 'ore': 'hours', 'caratteri': 'characters'}
+EXPIRY_VALUES = {'scade': 'expires', 'si ricarica': 'renews', 'si-ricarica': 'renews', 'si_ricarica': 'renews'}
+SOURCE_VALUES = {'manuale': 'manual', 'automatico': 'auto'}
+OLD_PRICE_SOURCE = 'una T4 a consumo su Lightning AI, novembre 2026'
+OLD_ARM_GPU = 'Apple Silicon (MPS: niente CUDA, alcuni modelli girano piu lenti o non girano)'
+NEW_ARM_GPU = 'Apple Silicon (MPS: no CUDA, some models run slower or not at all)'
+
+
+def _norm_device(s):
+    """Device strings written by the old bench template: '(4 core)', '(x2, misurata una)'."""
+    if not isinstance(s, str):
+        return s
+    s = s.replace(', misurata una)', ', one measured)')
+    return re.sub(r'\((\d+) core\)', r'(\1 cores)', s)
+
+
+def norm_metrics(m):
+    if not isinstance(m, dict):
+        return m
+    m = _ren(m, METRIC_KEYS)
+    for k in ('device', 'cpu'):
+        if k in m:
+            m[k] = _norm_device(m[k])
+    if isinstance(m.get('product'), dict):
+        p = _ren(m['product'], {'quantita': 'amount', 'unita': 'unit'})
+        if 'unit' in p:
+            p['unit'] = _tr(p['unit'], UNIT_VALUES)
+        m['product'] = p
+    if isinstance(m.get('jobs'), list):
+        m['jobs'] = [_ren(j, METRIC_KEYS) for j in m['jobs']]
+    return m
+
+
+def _norm_description(s):
+    if not isinstance(s, str):
+        return s
+    m = re.match(r'^cache di (.+) \(sola CPU, fuori quota\)$', s)
+    if m:
+        return f'cache for {m.group(1)} (CPU only, outside quota)'
+    m = re.match(r'^(.+): (\d+) lavori in un solo lancio( \(con cache\))?$', s)
+    if m:
+        return f'{m.group(1)}: {_jobs_n(int(m.group(2)))} in one run' + (' (with cache)' if m.group(3) else '')
+    return s
+
+
+def norm_run(r):
+    if not isinstance(r, dict):
+        return r
+    r = _ren(r, RUN_KEYS)
+    if 'status' in r:
+        r['status'] = _tr(r['status'], STATUS_VALUES)
+    if 'description' in r:
+        r['description'] = _norm_description(r['description'])
+    if 'unit' in r:
+        r['unit'] = _tr(r['unit'], UNIT_VALUES)
+    if 'metrics' in r:
+        r['metrics'] = norm_metrics(r['metrics'])
+    return r
+
+
+def norm_credit(c):
+    if not isinstance(c, dict):
+        return c
+    c = _ren(c, CREDIT_KEYS)
+    for key, table in (('expiry_type', EXPIRY_VALUES), ('source', SOURCE_VALUES), ('unit', UNIT_VALUES)):
+        if key in c:
+            c[key] = _tr(c[key], table)
+    if isinstance(c.get('note'), str):
+        c['note'] = _tr(c['note'], {'quota settimanale': 'weekly quota'})
+        c['note'] = re.sub(r'^piano ', 'plan ', c['note'])
     return c
 
 
-def ledger(limit=None):
+def norm_config(c):
+    c = _ren(c, CONFIG_KEYS)
+    if isinstance(c, dict) and c.get('price_source') == OLD_PRICE_SOURCE:
+        c['price_source'] = DEFAULT_CONFIG['price_source']
+    return c
+
+
+def norm_quota(q):
+    if not isinstance(q, dict):
+        return q
+    q = _ren(q, {'letta': 'read_at', 'errore': 'error'})
+    return {k: (_ren(v, QUOTA_KEYS) if isinstance(v, dict) else v) for k, v in q.items()}
+
+
+def norm_probe(p):
+    if not isinstance(p, dict):
+        return p
+    p = _ren(p, PROBE_KEYS)
+    if isinstance(p.get('nvidia_gpus'), list):
+        p['nvidia_gpus'] = [_ren(g, {'nome': 'name'}) for g in p['nvidia_gpus']]
+    if isinstance(p.get('other_gpus'), list):
+        p['other_gpus'] = [_tr(g, {OLD_ARM_GPU: NEW_ARM_GPU}) for g in p['other_gpus']]
+    return p
+
+
+def norm_bench(b):
+    if not isinstance(b, dict):
+        return b
+    out = {}
+    for k, v in b.items():
+        v = _ren(v, BENCH_KEYS)
+        if isinstance(v, dict):
+            if 'detail' in v:
+                v['detail'] = _norm_device(v['detail'])
+            if isinstance(v.get('name'), str):
+                v['name'] = _tr(v['name'], {'Kaggle solo CPU': 'Kaggle CPU only'})
+                v['name'] = re.sub(r'^Questo PC \(', 'This PC (', v['name'])
+        out[k] = v
+    return out
+
+
+def norm_cache(c):
+    if not isinstance(c, dict):
+        return c
+    out = {}
+    for k, v in c.items():
+        v = _ren(v, CACHE_KEYS)
+        if isinstance(v, dict) and 'metrics' in v:
+            v['metrics'] = norm_metrics(v['metrics'])
+        out[k] = v
+    return out
+
+
+def norm_running(d):
+    return {k: norm_run(v) for k, v in d.items()} if isinstance(d, dict) else d
+
+
+def norm_credits(lst):
+    return [norm_credit(c) for c in lst] if isinstance(lst, list) else lst
+
+
+def read_config():
+    c = dict(DEFAULT_CONFIG)
+    c.update(norm_config(load_json(CONFIG, {})))
+    return c
+
+
+def read_quota():
+    return norm_quota(load_json(QUOTA, None))
+
+
+def read_probe():
+    return norm_probe(load_json(PROBE, None))
+
+
+def read_bench():
+    return norm_bench(load_json(BENCH, {}))
+
+
+def read_cache():
+    return norm_cache(load_json(CACHE, {}))
+
+
+def read_running():
+    return norm_running(load_json(RUNNING, {}))
+
+
+def read_credits():
+    return norm_credits(load_json(CREDITS, []))
+
+
+def read_ledger(limit=None):
     if not LEDGER.exists():
         return []
-    righe = [json.loads(r) for r in LEDGER.read_text(encoding='utf-8').splitlines() if r.strip()]
-    return righe[-limit:] if limit else righe
+    rows = []
+    for line in LEDGER.read_text(encoding='utf-8').splitlines():
+        if not line.strip():
+            continue
+        try:
+            rows.append(norm_run(json.loads(line)))
+        except json.JSONDecodeError:
+            continue  # a half-written line must not take the dashboard down
+    return rows[-limit:] if limit else rows
 
 
-def stampa(obj):
-    print(json.dumps(obj, indent=1, ensure_ascii=False))
+def migrate_data_dir():
+    """One-time, idempotent migration of the data dir written by the Italian version.
+
+    1. Renames in-corso.json -> running.json, crediti.json -> credits.json, porta.txt -> port.txt and
+       the coda/ folder -> queue/, but only when the new name does not exist yet (an old file whose new
+       counterpart already exists is left alone, never overwritten).
+    2. Rewrites the JSON files with English keys/values (unknown keys are kept as they are). Files are
+       written to a temp file and then moved over the original, and only if something changed.
+    3. Rewrites ledger.jsonl the same way, keeping a one-time copy in ledger.jsonl.bak-it.
+    Reads also go through the normalizers, so a stale Italian-format file never breaks anything.
+    """
+    if not DATA.exists():
+        return
+    for old, new in (('in-corso.json', 'running.json'), ('crediti.json', 'credits.json'),
+                     ('porta.txt', 'port.txt'), ('coda', 'queue')):
+        if (DATA / old).exists() and not (DATA / new).exists():
+            try:
+                (DATA / old).rename(DATA / new)
+            except OSError:
+                pass  # another ko.py process got there first, or the file is in use: next run retries
+    for path, default, norm in ((CONFIG, {}, norm_config), (CREDITS, [], norm_credits),
+                                (RUNNING, {}, norm_running), (CACHE, {}, norm_cache),
+                                (BENCH, {}, norm_bench), (QUOTA, None, norm_quota),
+                                (PROBE, None, norm_probe)):
+        if not path.exists():
+            continue
+        data = load_json(path, default)
+        new = norm(copy.deepcopy(data))
+        if new != data:
+            save_json(path, new)
+    if LEDGER.exists():
+        lines = [x for x in LEDGER.read_text(encoding='utf-8').splitlines() if x.strip()]
+        out, changed = [], False
+        for line in lines:
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                out.append(line)  # keep what we cannot read, untouched
+                continue
+            new = norm_run(copy.deepcopy(rec))
+            changed = changed or new != rec
+            out.append(json.dumps(new, ensure_ascii=False))
+        if changed:
+            bak = LEDGER.with_name(LEDGER.name + '.bak-it')
+            if not bak.exists():
+                shutil.copy2(LEDGER, bak)
+            tmp = LEDGER.with_name(LEDGER.name + '.tmp')
+            tmp.write_text('\n'.join(out) + '\n', encoding='utf-8')
+            os.replace(tmp, LEDGER)
 
 
 # ---------------------------------------------------------------- Kaggle CLI
@@ -114,7 +376,7 @@ def kbase():
         elif shutil.which('kaggle'):
             _KBASE = [shutil.which('kaggle'), '-W']
         else:
-            raise SystemExit('Kaggle CLI non trovata. Installala con:  pip install kaggle')
+            raise SystemExit('Kaggle CLI not found. Install it with:  pip install kaggle')
     return _KBASE
 
 
@@ -131,35 +393,35 @@ def kaggle(*args, check=True):
 def username():
     m = re.search(r'username:\s*(\S+)', kaggle('config', 'view', check=False))
     if not m or m.group(1) == 'None':
-        raise SystemExit('Kaggle non configurato: segui "Prima volta" nel README (token in ~/.kaggle).')
+        raise SystemExit('Kaggle is not configured: put your API token in ~/.kaggle (see the README).')
     return m.group(1).lower()
 
 
-def _ore(s):
+def _hours(s):
     return float(str(s).strip().rstrip('h') or 0)
 
 
 def quota_live():
     out = kaggle('quota', '--format', 'json')
-    righe = json.loads(out[out.find('['):])
-    q = {r['resource'].lower(): {'usate': _ore(r['used']), 'rimaste': _ore(r['remaining']),
-                                 'totali': _ore(r['total']), 'ricarica': r['refreshAt']} for r in righe}
-    q['letta'] = iso()
+    rows = json.loads(out[out.find('['):])
+    q = {r['resource'].lower(): {'used': _hours(r['used']), 'remaining': _hours(r['remaining']),
+                                 'total': _hours(r['total']), 'refresh_at': r['refreshAt']} for r in rows}
+    q['read_at'] = iso()
     save_json(QUOTA, q)
     return q
 
 
-def quota_sicura():
+def quota_safe():
     try:
         return quota_live()
-    except Exception as e:  # rete assente, token scaduto...
-        q = load_json(QUOTA, None)
+    except Exception as e:  # no network, expired token...
+        q = read_quota()
         if q:
-            q['errore'] = str(e)[:200]
+            q['error'] = str(e)[:200]
         return q
 
 
-# ---------------------------------------------------------------- questo PC
+# ---------------------------------------------------------------- this PC
 
 def _ram_gb():
     try:
@@ -182,16 +444,16 @@ def _ram_gb():
 
 
 def probe():
-    info = {'host': platform.node(), 'sistema': f'{platform.system()} {platform.release()}',
-            'cpu': platform.processor() or platform.machine(), 'core': os.cpu_count(),
-            'ram_gb': _ram_gb(), 'gpu_nvidia': [], 'altre_gpu': [], 'letto': iso()}
+    info = {'host': platform.node(), 'system': f'{platform.system()} {platform.release()}',
+            'cpu': platform.processor() or platform.machine(), 'cores': os.cpu_count(),
+            'ram_gb': _ram_gb(), 'nvidia_gpus': [], 'other_gpus': [], 'read_at': iso()}
     smi = shutil.which('nvidia-smi')
     if smi:
         r = subprocess.run([smi, '--query-gpu=name,memory.total', '--format=csv,noheader,nounits'],
                            capture_output=True, text=True)
-        for riga in r.stdout.strip().splitlines():
-            nome, mem = [x.strip() for x in riga.rsplit(',', 1)]
-            info['gpu_nvidia'].append({'nome': nome, 'vram_gb': round(float(mem) / 1024, 1)})
+        for line in r.stdout.strip().splitlines():
+            name, mem = [x.strip() for x in line.rsplit(',', 1)]
+            info['nvidia_gpus'].append({'name': name, 'vram_gb': round(float(mem) / 1024, 1)})
     if platform.system() == 'Windows':
         cmd = ('$c=(Get-CimInstance Win32_Processor | Select-Object -First 1).Name;'
                '$g=@((Get-CimInstance Win32_VideoController).Name);'
@@ -202,61 +464,63 @@ def probe():
             info['cpu'] = (w.get('cpu') or info['cpu']).strip()
             gpus = w.get('gpu') or []
             gpus = [gpus] if isinstance(gpus, str) else gpus
-            info['altre_gpu'] = [g for g in gpus if 'NVIDIA' not in g.upper()]
+            info['other_gpus'] = [g for g in gpus if 'NVIDIA' not in g.upper()]
         except json.JSONDecodeError:
             pass
     elif platform.system() == 'Darwin' and platform.machine() == 'arm64':
-        info['altre_gpu'] = ['Apple Silicon (MPS: niente CUDA, alcuni modelli girano piu lenti o non girano)']
-    info['cuda_locale'] = bool(info['gpu_nvidia'])
+        info['other_gpus'] = [NEW_ARM_GPU]
+    info['local_cuda'] = bool(info['nvidia_gpus'])
     save_json(PROBE, info)
     return info
 
 
-def decidi(vram_gb=0.0, solo_cpu=False, ore=0.5):
+def decide(vram_gb=0.0, cpu_only=False, hours=0.5):
     p = probe()
-    q = quota_sicura()
-    vram_pc = max((g['vram_gb'] for g in p['gpu_nvidia']), default=0)
-    rimaste = q['gpu']['rimaste'] if q and 'gpu' in q else None
-    if solo_cpu:
-        if ore <= 0.25:
-            d = ('pc', 'lavoro CPU breve: prepararlo per Kaggle costa piu del lavoro stesso')
+    q = quota_safe()
+    pc_vram = max((g['vram_gb'] for g in p['nvidia_gpus']), default=0)
+    remaining = q['gpu']['remaining'] if q and 'gpu' in q else None
+    if cpu_only:
+        if hours <= 0.25:
+            d = ('pc', 'short CPU job: preparing it for Kaggle costs more than the job itself')
         else:
-            d = ('kaggle-cpu', 'lavoro CPU lungo: le sessioni Kaggle in sola CPU non consumano la quota '
-                               'settimanale (4 core, circa 30 GB di RAM, massimo 12 ore) e il PC resta libero')
-    elif vram_pc >= vram_gb + 1:
-        d = ('pc', f'il PC ha una GPU NVIDIA da {vram_pc} GB, basta per {vram_gb} GB')
+            d = ('kaggle-cpu', 'long CPU job: CPU-only Kaggle sessions do not use the weekly quota '
+                               '(4 cores, about 30 GB of RAM, 12 hours max) and the PC stays free')
+    elif pc_vram >= vram_gb + 1:
+        d = ('pc', f'the PC has an NVIDIA GPU with {pc_vram} GB, enough for {vram_gb} GB')
     elif vram_gb > 30:
-        d = ('a-pagamento', f'servono {vram_gb} GB di VRAM: oltre le due T4 di Kaggle (2 x 16 GB)')
-    elif rimaste is not None and rimaste < ore:
-        d = ('aspetta-o-paga', f'restano {rimaste} ore GPU, ne servono {ore}: '
-                               f'la quota si ricarica il {q["gpu"]["ricarica"]}')
+        d = ('paid', f'needs {vram_gb} GB of VRAM: more than the two T4s on Kaggle (2 x 16 GB)')
+    elif remaining is not None and remaining < hours:
+        d = ('wait-or-pay', f'{remaining} GPU hours left, {hours} needed: '
+                            f'the quota resets on {q["gpu"]["refresh_at"]}')
     else:
-        dove = 'una T4 da 16 GB' if vram_gb <= 15 else 'due T4: il modello va diviso con device_map="auto"'
-        extra = ' Sopra le 12 ore va spezzato in piu lanci con checkpoint.' if ore > 12 else ''
-        motivo_pc = (f'la GPU NVIDIA del PC ha {vram_pc} GB' if vram_pc else 'il PC non ha una GPU NVIDIA (CUDA)')
-        d = ('kaggle-gpu', f'{motivo_pc}; su Kaggle {dove}, quota rimasta {rimaste} ore.{extra}')
-    return {'dove': d[0], 'motivo': d[1], 'pc': {k: p[k] for k in ('host', 'cpu', 'core', 'ram_gb', 'gpu_nvidia', 'altre_gpu')},
-            'quota_gpu_rimasta_h': rimaste}
+        where = 'one 16 GB T4' if vram_gb <= 15 else 'two T4s: the model has to be split with device_map="auto"'
+        extra = ' Beyond 12 hours the job has to be split into several runs with checkpoints.' if hours > 12 else ''
+        pc_reason = (f'the PC\'s NVIDIA GPU has {pc_vram} GB' if pc_vram else 'the PC has no NVIDIA GPU (CUDA)')
+        left = f'{remaining} hours' if remaining is not None else 'unknown'
+        d = ('kaggle-gpu', f'{pc_reason}; on Kaggle: {where}, quota left {left}.{extra}')
+    return {'where': d[0], 'reason': d[1],
+            'pc': {k: p[k] for k in ('host', 'cpu', 'cores', 'ram_gb', 'nvidia_gpus', 'other_gpus')},
+            'gpu_quota_left_h': remaining}
 
 
-# ---------------------------------------------------------------- lanci su Kaggle
+# ---------------------------------------------------------------- runs on Kaggle
 
-def set_incorso(run_id, rimuovi=False, **kw):
+def set_running(run_id, remove=False, **kw):
     with _lock:
-        d = load_json(INCORSO, {})
-        if rimuovi:
+        d = read_running()
+        if remove:
             d.pop(run_id, None)
         else:
             d.setdefault(run_id, {}).update(kw)
-        save_json(INCORSO, d)
+        save_json(RUNNING, d)
 
 
-def prepara_kernel(nome, acc, codice, cache_ref=None, internet=True):
-    slug = re.sub(r'[^a-z0-9-]+', '-', nome.lower()).strip('-')[:50]
+def prepare_kernel(name, acc, code, cache_ref=None, internet=True):
+    slug = re.sub(r'[^a-z0-9-]+', '-', name.lower()).strip('-')[:50]
     run_id = now().strftime('%Y%m%d-%H%M%S') + '-' + slug
     kdir = RUNS / run_id / 'kernel'
     kdir.mkdir(parents=True)
-    (kdir / 'main.py').write_text(codice, encoding='utf-8')
+    (kdir / 'main.py').write_text(code, encoding='utf-8')
     ref = f'{username()}/{slug}'
     save_json(kdir / 'kernel-metadata.json', {
         'id': ref, 'title': slug, 'code_file': 'main.py', 'language': 'python', 'kernel_type': 'script',
@@ -267,175 +531,199 @@ def prepara_kernel(nome, acc, codice, cache_ref=None, internet=True):
     return run_id, ref, kdir
 
 
-def stato_kernel(ref):
+def kernel_status(ref):
     out = kaggle('kernels', 'status', ref, check=False)
     m = re.search(r'status "([^"]+)"', out)
-    return m.group(1).split('.')[-1].lower() if m else 'sconosciuto'
+    return m.group(1).split('.')[-1].lower() if m else 'unknown'
 
 
-def _durata_log(outdir):
+def _log_duration(outdir):
     for f in Path(outdir).glob('*.log'):
         try:
-            righe = json.loads(f.read_text(encoding='utf-8'))
-            return round(max(r.get('time', 0) for r in righe), 1)
+            rows = json.loads(f.read_text(encoding='utf-8'))
+            return round(max(r.get('time', 0) for r in rows), 1)
         except (json.JSONDecodeError, ValueError):
             continue
     return None
 
 
-def lancia(run_id, ref, kdir, acc, progetto, descrizione='', scarica=True, timeout=None, unita=None):
-    apri_dashboard(browser=True, silenzioso=True)
-    q0 = quota_sicura()
+def read_metrics(outdir):
+    """Metrics written by the kernel: metrics.json (or metriche.json from the Italian version)."""
+    for name in ('metrics.json', 'metriche.json'):
+        m = load_json(Path(outdir) / name, None)
+        if m is not None:
+            return norm_metrics(m)
+    return None
+
+
+def launch(run_id, ref, kdir, acc, project, description='', download=True, timeout=None, unit=None):
+    open_dashboard(browser=True, quiet=True)
+    q0 = quota_safe()
     t_push = time.time()
     args = ['kernels', 'push', '-p', kdir]
-    if ACCELERATORI[acc]:
-        args += ['--accelerator', ACCELERATORI[acc]]
+    if ACCELERATORS[acc]:
+        args += ['--accelerator', ACCELERATORS[acc]]
     if timeout:
         args += ['-t', int(timeout)]
-    set_incorso(run_id, ref=ref, acc=acc, progetto=progetto, descrizione=descrizione, stato='invio', push=iso())
+    set_running(run_id, ref=ref, acc=acc, project=project, description=description, status='sending',
+                pushed_at=iso())
     try:
         out = kaggle(*args)
     except RuntimeError as e:
-        set_incorso(run_id, rimuovi=True)
-        raise SystemExit(f'Invio a Kaggle fallito: {e}')
+        set_running(run_id, remove=True)
+        raise SystemExit(f'Push to Kaggle failed: {e}')
     if 'error' in out.lower() and 'success' not in out.lower():
-        set_incorso(run_id, rimuovi=True)
-        raise SystemExit(f'Invio a Kaggle fallito: {out.strip()[:600]}')
-    t_run, stato = None, 'queued'
-    while stato not in FINALI:
+        set_running(run_id, remove=True)
+        raise SystemExit(f'Push to Kaggle failed: {out.strip()[:600]}')
+    t_run, status = None, 'queued'
+    while status not in FINAL_STATES:
         time.sleep(10)
-        stato = stato_kernel(ref)
-        if stato == 'running' and t_run is None:
+        status = kernel_status(ref)
+        if status == 'running' and t_run is None:
             t_run = time.time()
-            set_incorso(run_id, inizio_calcolo=iso())
-        set_incorso(run_id, stato=stato, aggiornato=iso())
+            set_running(run_id, compute_started_at=iso())
+        set_running(run_id, status=status, updated_at=iso())
         if time.time() - t_push > 13 * 3600:
-            stato = 'abbandonato'
-    t_fine = time.time()
-    set_incorso(run_id, stato='scarico i risultati' if scarica else 'leggo il log')
+            status = 'abandoned'
+    t_end = time.time()
+    set_running(run_id, status='downloading results' if download else 'reading log')
     outdir = RUNS / run_id / 'output'
     outdir.mkdir(exist_ok=True)
-    if scarica:
+    if download:
         kaggle('kernels', 'output', ref, '-p', outdir, '-q', check=False)
-    else:  # solo log e metriche: la cache resta su Kaggle, non scende sul PC
-        kaggle('kernels', 'output', ref, '-p', outdir, '-q', '--file-pattern', r'(\.log$|metriche\.json$)', check=False)
-    time.sleep(15)  # la quota si aggiorna con un po' di ritardo
-    q1 = quota_sicura()
-    metriche = load_json(outdir / 'metriche.json', None)
-    # Ogni lancio conta solo la propria risorsa: un lancio CPU non consuma quota. Con piu' lanci GPU in
-    # parallelo la differenza di quota e' condivisa, quindi vale come limite superiore.
-    consumo = {}
+    else:  # only log and metrics: the cache stays on Kaggle, it does not come down to the PC
+        kaggle('kernels', 'output', ref, '-p', outdir, '-q', '--file-pattern',
+               r'(\.log$|metrics\.json$|metriche\.json$)', check=False)
+    time.sleep(15)  # the quota is updated with a bit of delay
+    q1 = quota_safe()
+    metrics = read_metrics(outdir)
+    # Each run only counts its own resource: a CPU run uses no quota. With several GPU runs in
+    # parallel the quota difference is shared, so it is an upper bound.
+    used = {}
     if acc in ('gpu', 'tpu') and q0 and q1 and acc in q0 and acc in q1 \
-            and q0[acc]['ricarica'] == q1[acc]['ricarica']:
-        consumo[acc] = round(q1[acc]['usate'] - q0[acc]['usate'], 2)
-    rec = {'id': run_id, 'ref': ref, 'progetto': progetto, 'descrizione': descrizione, 'acc': acc,
-           'stato': stato, 'push': iso(dt.datetime.fromtimestamp(t_push).astimezone()), 'fine': iso(),
-           'attesa_s': round((t_run or t_fine) - t_push), 'sessione_s': _durata_log(outdir),
-           'totale_s': round(t_fine - t_push), 'consumo_h': consumo, 'metriche': metriche,
-           'unita': unita, 'output': str(outdir)}
+            and q0[acc]['refresh_at'] == q1[acc]['refresh_at']:
+        used[acc] = round(q1[acc]['used'] - q0[acc]['used'], 2)
+    rec = {'id': run_id, 'ref': ref, 'project': project, 'description': description, 'acc': acc,
+           'status': status, 'pushed_at': iso(dt.datetime.fromtimestamp(t_push).astimezone()),
+           'finished_at': iso(), 'wait_s': round((t_run or t_end) - t_push),
+           'session_s': _log_duration(outdir), 'total_s': round(t_end - t_push), 'quota_used_h': used,
+           'metrics': metrics, 'unit': unit, 'output': str(outdir)}
     with _lock:
         LEDGER.parent.mkdir(parents=True, exist_ok=True)
         with LEDGER.open('a', encoding='utf-8') as f:
             f.write(json.dumps(rec, ensure_ascii=False) + '\n')
-    set_incorso(run_id, rimuovi=True)
+    set_running(run_id, remove=True)
     return rec
 
 
-def codice_da_template(nome, jobs):
-    t = TEMPLATES / nome
+TEMPLATE_KEYS = {'descrizione': 'description', 'unita': 'unit', 'collaudato': 'tested', 'origine': 'origin'}
+
+
+def read_template_meta(name):
+    """template.json, also accepting the Italian keys of the original version."""
+    return _ren(load_json(TEMPLATES / name / 'template.json', {}), TEMPLATE_KEYS)
+
+
+def code_from_template(name, jobs):
+    t = TEMPLATES / name
     if not (t / 'main.py').exists():
-        disp = ', '.join(sorted(p.name for p in TEMPLATES.iterdir() if p.is_dir()))
-        raise SystemExit(f'Template "{nome}" inesistente. Disponibili: {disp}')
-    meta = load_json(t / 'template.json', {})
+        avail = ', '.join(sorted(p.name for p in TEMPLATES.iterdir() if p.is_dir()))
+        raise SystemExit(f'Template "{name}" does not exist. Available: {avail}')
+    meta = read_template_meta(name)
     src = (t / 'main.py').read_text(encoding='utf-8')
     return src.replace("'__JOBS__'", repr(json.dumps(jobs, ensure_ascii=False))), meta
 
 
-def esegui_template(template, jobs, nome=None, progetto='', acc=None, scarica=True, timeout=None,
-                    usa_cache=True, descrizione=''):
-    codice, meta = codice_da_template(template, jobs)
+def run_template(template, jobs, name=None, project='', acc=None, download=True, timeout=None,
+                 use_cache=True, description=''):
+    code, meta = code_from_template(template, jobs)
     acc = acc or meta.get('acc', 'gpu')
-    cache_ref = load_json(CACHE, {}).get(template, {}).get('ref') if usa_cache else None
-    run_id, ref, kdir = prepara_kernel(nome or f'ko-{template}', acc, codice, cache_ref)
-    descr = descrizione or f'{template}: {len(jobs)} lavori in un solo lancio' + (' (con cache)' if cache_ref else '')
-    return lancia(run_id, ref, kdir, acc, progetto, descr, scarica, timeout, meta.get('unita'))
+    cache_ref = read_cache().get(template, {}).get('ref') if use_cache else None
+    run_id, ref, kdir = prepare_kernel(name or f'ko-{template}', acc, code, cache_ref)
+    descr = description or f'{template}: {_jobs_n(len(jobs))} in one run' + (' (with cache)' if cache_ref else '')
+    return launch(run_id, ref, kdir, acc, project, descr, download, timeout, meta.get('unit'))
 
 
-# ---------------------------------------------------------------- comandi
+# ---------------------------------------------------------------- commands
 
 def cmd_probe(a):
-    stampa(probe())
+    show(probe())
 
 
 def cmd_quota(a):
-    stampa(quota_live())
+    show(quota_live())
 
 
-def cmd_decidi(a):
-    stampa(decidi(a.vram, a.solo_cpu, a.ore))
+def cmd_decide(a):
+    show(decide(a.vram, a.cpu_only, a.hours))
 
 
 def cmd_run(a):
     if a.template:
         jobs = json.loads(Path(a.jobs).read_text(encoding='utf-8')) if a.jobs else []
-        rec = esegui_template(a.template, jobs, a.nome, a.progetto, a.acc, not a.no_scarica, a.timeout,
-                              not a.senza_cache, a.descrizione)
+        rec = run_template(a.template, jobs, a.name, a.project, a.acc, not a.no_download, a.timeout,
+                           not a.no_cache, a.description)
     elif a.script:
-        codice = Path(a.script).read_text(encoding='utf-8')
+        code = Path(a.script).read_text(encoding='utf-8')
         acc = a.acc or 'gpu'
-        run_id, ref, kdir = prepara_kernel(a.nome or Path(a.script).stem, acc, codice, internet=not a.no_internet)
-        rec = lancia(run_id, ref, kdir, acc, a.progetto, a.descrizione or Path(a.script).name,
-                     not a.no_scarica, a.timeout)
+        run_id, ref, kdir = prepare_kernel(a.name or Path(a.script).stem, acc, code, internet=not a.no_internet)
+        rec = launch(run_id, ref, kdir, acc, a.project, a.description or Path(a.script).name,
+                     not a.no_download, a.timeout)
     else:
-        raise SystemExit('Serve --template oppure --script')
-    stampa(rec)
+        raise SystemExit('Pass --template or --script')
+    show(rec)
 
 
-def cmd_coda(a):
-    CODA.mkdir(parents=True, exist_ok=True)
-    if a.azione == 'vedi':
-        stampa({f.stem: [json.loads(r) for r in f.read_text(encoding='utf-8').splitlines() if r.strip()]
-                for f in CODA.glob('*.jsonl')})
+def _read_jsonl(f):
+    return [json.loads(r) for r in f.read_text(encoding='utf-8').splitlines() if r.strip()]
+
+
+def cmd_queue(a):
+    QUEUE.mkdir(parents=True, exist_ok=True)
+    if a.action == 'list':
+        show({f.stem: _read_jsonl(f) for f in QUEUE.glob('*.jsonl')})
         return
     if not a.template:
-        raise SystemExit('Serve il nome del template')
-    f = CODA / f'{a.template}.jsonl'
-    if a.azione == 'aggiungi':
-        nuovi = json.loads(Path(a.file).read_text(encoding='utf-8')) if a.file else [json.loads(a.job)]
+        raise SystemExit('Pass the template name')
+    f = QUEUE / f'{a.template}.jsonl'
+    if a.action == 'add':
+        if not (a.file or a.job):
+            raise SystemExit('Pass --job (one job as JSON) or --file (a JSON file)')
+        new = json.loads(Path(a.file).read_text(encoding='utf-8')) if a.file else [json.loads(a.job)]
         with f.open('a', encoding='utf-8') as h:
-            for j in (nuovi if isinstance(nuovi, list) else [nuovi]):
+            for j in (new if isinstance(new, list) else [new]):
                 h.write(json.dumps(j, ensure_ascii=False) + '\n')
-        print(f'In coda per {a.template}: {len(f.read_text(encoding="utf-8").splitlines())} lavori')
-    elif a.azione == 'lancia':
-        jobs = [json.loads(r) for r in f.read_text(encoding='utf-8').splitlines() if r.strip()] if f.exists() else []
+        print(f'Queued for {a.template}: {_jobs_n(len(f.read_text(encoding="utf-8").splitlines()))}')
+    elif a.action == 'launch':
+        jobs = _read_jsonl(f) if f.exists() else []
         if not jobs:
-            raise SystemExit(f'Coda di {a.template} vuota')
-        rec = esegui_template(a.template, jobs, progetto=a.progetto)
-        if rec['stato'] == 'complete':
+            raise SystemExit(f'Queue for {a.template} is empty')
+        rec = run_template(a.template, jobs, project=a.project)
+        if rec['status'] == 'complete':
             f.unlink()
-        stampa(rec)
-    elif a.azione == 'svuota':
+        show(rec)
+    elif a.action == 'clear':
         f.unlink(missing_ok=True)
 
 
 def cmd_cache(a):
-    t = TEMPLATES / a.template
-    meta = load_json(t / 'template.json', {})
+    meta = read_template_meta(a.template)
     pip_pkgs, hf = meta.get('cache_pip', []), meta.get('cache_hf', [])
     if not (pip_pkgs or hf):
-        raise SystemExit(f'Il template {a.template} non dichiara niente da mettere in cache')
-    codice, _ = codice_da_template('cache', [{'template': a.template, 'pip': pip_pkgs, 'hf': hf}])
-    run_id, ref, kdir = prepara_kernel(f'ko-cache-{a.template}', 'cpu', codice)
-    rec = lancia(run_id, ref, kdir, 'cpu', a.progetto or 'cache', f'cache di {a.template} (sola CPU, fuori quota)',
-                 scarica=False)
-    if rec['stato'] == 'complete':
-        c = load_json(CACHE, {})
-        c[a.template] = {'ref': ref, 'creata': iso(), 'pip': pip_pkgs, 'hf': hf, 'metriche': rec.get('metriche')}
+        raise SystemExit(f'Template {a.template} does not declare anything to cache')
+    code, _ = code_from_template('cache', [{'template': a.template, 'pip': pip_pkgs, 'hf': hf}])
+    run_id, ref, kdir = prepare_kernel(f'ko-cache-{a.template}', 'cpu', code)
+    rec = launch(run_id, ref, kdir, 'cpu', a.project or 'cache',
+                 f'cache for {a.template} (CPU only, outside quota)', download=False)
+    if rec['status'] == 'complete':
+        c = read_cache()
+        c[a.template] = {'ref': ref, 'created_at': iso(), 'pip': pip_pkgs, 'hf': hf,
+                         'metrics': rec.get('metrics')}
         save_json(CACHE, c)
-    stampa(rec)
+    show(rec)
 
 
-def _gflops_locale():
+def _gflops_local():
     try:
         import numpy as np
     except ImportError:
@@ -444,50 +732,51 @@ def _gflops_locale():
     a = np.random.rand(n, n).astype(np.float32)
     b = np.random.rand(n, n).astype(np.float32)
     a @ b
-    migliore = min(_cronometra(lambda: a @ b) for _ in range(5))
-    return round(2 * n ** 3 / migliore / 1e9, 1)
+    best = min(_time_it(lambda: a @ b) for _ in range(5))
+    return round(2 * n ** 3 / best / 1e9, 1)
 
 
-def _cronometra(fn):
+def _time_it(fn):
     t = time.perf_counter()
     fn()
     return time.perf_counter() - t
 
 
 def cmd_bench(a):
-    apri_dashboard(browser=True, silenzioso=True)
+    open_dashboard(browser=True, quiet=True)
     p = probe()
-    ris = load_json(BENCH, {})
-    ris['pc'] = {'nome': f'Questo PC ({p["host"]})', 'dettaglio': p['cpu'], 'gflops_fp32': _gflops_locale(),
-                 'misurato': iso()}
-    save_json(BENCH, ris)
-    esiti = {}
+    res = read_bench()
+    res['pc'] = {'name': f'This PC ({p["host"]})', 'detail': p['cpu'], 'gflops_fp32': _gflops_local(),
+                 'measured_at': iso()}
+    save_json(BENCH, res)
+    outcomes = {}
 
-    def uno(acc):
-        codice, _ = codice_da_template('bench', [{'acc': acc}])
-        run_id, ref, kdir = prepara_kernel(f'ko-bench-{acc}', acc, codice)
-        esiti[acc] = lancia(run_id, ref, kdir, acc, 'benchmark', f'benchmark {acc.upper()}')
+    def one(acc):
+        code, _ = code_from_template('bench', [{'acc': acc}])
+        run_id, ref, kdir = prepare_kernel(f'ko-bench-{acc}', acc, code)
+        outcomes[acc] = launch(run_id, ref, kdir, acc, 'benchmark', f'benchmark {acc.upper()}')
 
-    fili = [threading.Thread(target=uno, args=(acc,)) for acc in (['cpu'] if a.solo_cpu else ['cpu', 'gpu'])]
-    for f in fili:
-        f.start()
-    for f in fili:
-        f.join()
-    ris = load_json(BENCH, {})
-    for acc, rec in esiti.items():
-        m = rec.get('metriche') or {}
-        ris[f'kaggle_{acc}'] = {'nome': f'Kaggle {"GPU" if acc == "gpu" else "solo CPU"}',
-                                'dettaglio': m.get('dispositivo'), 'gflops_fp32': m.get('gflops_fp32'),
-                                'gflops_fp16': m.get('gflops_fp16'), 'misurato': iso(), 'stato': rec['stato']}
-    save_json(BENCH, ris)
-    stampa(ris)
+    threads = [threading.Thread(target=one, args=(acc,)) for acc in (['cpu'] if a.cpu_only else ['cpu', 'gpu'])]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    res = read_bench()
+    for acc, rec in outcomes.items():
+        m = rec.get('metrics') or {}
+        res[f'kaggle_{acc}'] = {'name': f'Kaggle {"GPU" if acc == "gpu" else "CPU only"}',
+                                'detail': m.get('device'), 'gflops_fp32': m.get('gflops_fp32'),
+                                'gflops_fp16': m.get('gflops_fp16'), 'measured_at': iso(),
+                                'status': rec['status']}
+    save_json(BENCH, res)
+    show(res)
 
 
 def eleven_auto(c):
     key = os.environ.get('ELEVENLABS_API_KEY')
     if not key and c.get('elevenlabs_env_file') and Path(c['elevenlabs_env_file']).exists():
-        for riga in Path(c['elevenlabs_env_file']).read_text(encoding='utf-8').splitlines():
-            m = re.match(r'\s*ELEVENLABS_API_KEY\s*=\s*["\']?([^"\'\s]+)', riga)
+        for line in Path(c['elevenlabs_env_file']).read_text(encoding='utf-8').splitlines():
+            m = re.match(r'\s*ELEVENLABS_API_KEY\s*=\s*["\']?([^"\'\s]+)', line)
             if m:
                 key = m.group(1)
                 break
@@ -496,162 +785,163 @@ def eleven_auto(c):
     req = urllib.request.Request('https://api.elevenlabs.io/v1/user/subscription', headers={'xi-api-key': key})
     s = json.load(urllib.request.urlopen(req, timeout=15))
     reset = s.get('next_character_count_reset_unix')
-    return {'servizio': 'ElevenLabs', 'residuo': s['character_limit'] - s['character_count'],
-            'totale': s['character_limit'], 'unita': 'caratteri',
-            'scadenza': dt.date.fromtimestamp(reset).isoformat() if reset else None,
-            'tipo_scadenza': 'si ricarica', 'nota': f'piano {s.get("tier", "?")}', 'fonte': 'automatico',
-            'aggiornato': iso()}
+    return {'service': 'ElevenLabs', 'remaining': s['character_limit'] - s['character_count'],
+            'total': s['character_limit'], 'unit': 'characters',
+            'expires': dt.date.fromtimestamp(reset).isoformat() if reset else None,
+            'expiry_type': 'renews', 'note': f'plan {s.get("tier", "?")}', 'source': 'auto',
+            'updated_at': iso()}
 
 
-def aggiorna_crediti_auto():
-    c = config()
-    cred = {x['servizio']: x for x in load_json(CREDITI, [])}
-    q = quota_sicura()
+def refresh_credits_auto():
+    c = read_config()
+    cred = {x['service']: x for x in read_credits()}
+    q = quota_safe()
     if q and 'gpu' in q:
-        for r, nome in (('gpu', 'Kaggle GPU'), ('tpu', 'Kaggle TPU')):
-            cred[nome] = {'servizio': nome, 'residuo': q[r]['rimaste'], 'totale': q[r]['totali'], 'unita': 'ore',
-                          'scadenza': q[r]['ricarica'][:10], 'tipo_scadenza': 'si ricarica',
-                          'nota': 'quota settimanale', 'fonte': 'automatico', 'aggiornato': q['letta']}
+        for r, name in (('gpu', 'Kaggle GPU'), ('tpu', 'Kaggle TPU')):
+            cred[name] = {'service': name, 'remaining': q[r]['remaining'], 'total': q[r]['total'],
+                          'unit': 'hours', 'expires': q[r]['refresh_at'][:10], 'expiry_type': 'renews',
+                          'note': 'weekly quota', 'source': 'auto', 'updated_at': q['read_at']}
     try:
         e = eleven_auto(c)
         if e:
             cred['ElevenLabs'] = e
     except Exception as ex:
         if 'ElevenLabs' in cred:
-            cred['ElevenLabs']['errore'] = str(ex)[:120]
-    save_json(CREDITI, list(cred.values()))
+            cred['ElevenLabs']['error'] = str(ex)[:120]
+    save_json(CREDITS, list(cred.values()))
     return list(cred.values())
 
 
-def cmd_crediti(a):
-    cred = {x['servizio']: x for x in load_json(CREDITI, [])}
-    if a.azione == 'imposta':
-        x = cred.get(a.servizio, {'servizio': a.servizio})
-        for k in ('residuo', 'totale', 'unita', 'scadenza', 'tipo_scadenza', 'nota'):
+def cmd_credits(a):
+    cred = {x['service']: x for x in read_credits()}
+    if a.action in ('set', 'remove') and not a.service:
+        raise SystemExit('Pass --service')
+    if a.action == 'set':
+        x = cred.get(a.service, {'service': a.service})
+        for k in ('remaining', 'total', 'unit', 'expires', 'expiry_type', 'note'):
             v = getattr(a, k)
             if v is not None:
                 x[k] = v
-        x.update(fonte='manuale', aggiornato=iso())
-        cred[a.servizio] = x
-        save_json(CREDITI, list(cred.values()))
-    elif a.azione == 'togli':
-        cred.pop(a.servizio, None)
-        save_json(CREDITI, list(cred.values()))
-    elif a.azione == 'aggiorna':
-        aggiorna_crediti_auto()
-    stampa(load_json(CREDITI, []))
+        x.update(source='manual', updated_at=iso())
+        cred[a.service] = x
+        save_json(CREDITS, list(cred.values()))
+    elif a.action == 'remove':
+        cred.pop(a.service, None)
+        save_json(CREDITS, list(cred.values()))
+    elif a.action == 'refresh':
+        refresh_credits_auto()
+    show(read_credits())
 
 
 # ---------------------------------------------------------------- dashboard
 
-PORTA_FILE = DATA / 'porta.txt'
-
-
-def porta_occupata(porta):
+def port_in_use(port):
     with socket.socket() as s:
         s.settimeout(0.5)
-        return s.connect_ex(('127.0.0.1', porta)) == 0
+        return s.connect_ex(('127.0.0.1', port)) == 0
 
 
-def e_nostra(porta):
-    """True se sulla porta risponde questa dashboard (e non un'altra app)."""
+def is_ours(port):
+    """True if this dashboard (and not another app, or the old Italian one) answers on the port."""
     try:
-        with urllib.request.urlopen(f'http://127.0.0.1:{porta}/api/ping', timeout=1) as r:
-            return json.load(r).get('app') == 'kaggle-offload'
+        with urllib.request.urlopen(f'http://127.0.0.1:{port}/api/ping', timeout=1) as r:
+            return json.load(r).get('app') == 'kaggle-offload' and r.headers.get('X-Kaggle-Offload') == '2'
     except Exception:
         return False
 
 
-def porta_attiva():
-    """La porta della dashboard se gira gia', altrimenti None."""
+def active_port():
+    """The dashboard's port if it is already running, otherwise None."""
     try:
-        p = int(PORTA_FILE.read_text().strip())
+        p = int(PORT_FILE.read_text().strip())
     except (FileNotFoundError, ValueError):
-        p = config()['porta']
-    return p if e_nostra(p) else None
+        p = read_config()['port']
+    return p if is_ours(p) else None
 
 
-def scegli_porta():
-    base = config()['porta']
+def pick_port():
+    base = read_config()['port']
     for p in range(base, base + 30):
-        if not porta_occupata(p):
+        if not port_in_use(p):
             return p
-    raise SystemExit(f'Nessuna porta libera fra {base} e {base + 29}')
+    raise SystemExit(f'No free port between {base} and {base + 29}')
 
 
-def stato_completo():
-    return {'ora': iso(), 'config': config(), 'probe': load_json(PROBE, None), 'quota': load_json(QUOTA, None),
-            'in_corso': load_json(INCORSO, {}), 'lanci': ledger(300), 'bench': load_json(BENCH, {}),
-            'crediti': load_json(CREDITI, []), 'cache': load_json(CACHE, {}),
-            'coda': {f.stem: len([r for r in f.read_text(encoding='utf-8').splitlines() if r.strip()])
-                     for f in CODA.glob('*.jsonl')} if CODA.exists() else {}}
+def full_state():
+    return {'now': iso(), 'config': read_config(), 'probe': read_probe(), 'quota': read_quota(),
+            'running': read_running(), 'runs': read_ledger(300), 'bench': read_bench(),
+            'credits': read_credits(), 'cache': read_cache(),
+            'queue': {f.stem: len([r for r in f.read_text(encoding='utf-8').splitlines() if r.strip()])
+                      for f in QUEUE.glob('*.jsonl')} if QUEUE.exists() else {}}
 
 
-class Gestore(BaseHTTPRequestHandler):
+class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
-    def _invia(self, body, ctype, code=200):
+    def _send(self, body, ctype, code=200, extra=None):
         self.send_response(code)
         self.send_header('Content-Type', ctype)
         self.send_header('Cache-Control', 'no-store')
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)
 
     def do_GET(self):
         if self.path in ('/', '/index.html'):
-            self._invia(DASHBOARD_HTML.read_bytes(), 'text/html; charset=utf-8')
+            self._send(DASHBOARD_HTML.read_bytes(), 'text/html; charset=utf-8')
         elif self.path.startswith('/api/ping'):
-            self._invia(b'{"app": "kaggle-offload"}', 'application/json')
-        elif self.path.startswith('/api/stato'):
-            self._invia(json.dumps(stato_completo(), ensure_ascii=False).encode('utf-8'),
-                        'application/json; charset=utf-8')
+            self._send(b'{"app": "kaggle-offload"}', 'application/json', extra={'X-Kaggle-Offload': '2'})
+        elif self.path.startswith(('/api/state', '/api/stato')):  # /api/stato: old name, kept as alias
+            self._send(json.dumps(full_state(), ensure_ascii=False).encode('utf-8'),
+                       'application/json; charset=utf-8')
         else:
-            self._invia(b'not found', 'text/plain', 404)
+            self._send(b'not found', 'text/plain', 404)
 
 
-def _aggiornatore():
-    giri = 0
+def _updater():
+    rounds = 0
     while True:
         try:
-            if giri % 10 == 0:
-                aggiorna_crediti_auto()  # legge anche la quota
-            elif load_json(INCORSO, {}):
-                quota_sicura()
+            if rounds % 10 == 0:
+                refresh_credits_auto()  # also reads the quota
+            elif read_running():
+                quota_safe()
         except Exception:
             pass
-        giri += 1
+        rounds += 1
         time.sleep(60)
 
 
 def cmd_dashboard(a):
-    attiva = porta_attiva()
-    if attiva:
-        print(f'Dashboard gia attiva su http://127.0.0.1:{attiva}')
-        if not a.senza_browser:
-            webbrowser.open(f'http://127.0.0.1:{attiva}')
+    active = active_port()
+    if active:
+        print(f'Dashboard already running at http://127.0.0.1:{active}')
+        if not a.no_browser:
+            webbrowser.open(f'http://127.0.0.1:{active}')
         return
     DATA.mkdir(parents=True, exist_ok=True)
     if not PROBE.exists():
         probe()
-    porta = scegli_porta()
-    srv = ThreadingHTTPServer(('127.0.0.1', porta), Gestore)
-    PORTA_FILE.write_text(str(porta))
-    threading.Thread(target=_aggiornatore, daemon=True).start()
-    print(f'Dashboard su http://127.0.0.1:{porta}  (Ctrl+C per fermarla)', flush=True)
-    if not a.senza_browser:
-        threading.Timer(0.8, webbrowser.open, args=(f'http://127.0.0.1:{porta}',)).start()
+    port = pick_port()
+    srv = ThreadingHTTPServer(('127.0.0.1', port), Handler)
+    PORT_FILE.write_text(str(port))
+    threading.Thread(target=_updater, daemon=True).start()
+    print(f'Dashboard at http://127.0.0.1:{port}  (Ctrl+C to stop it)', flush=True)
+    if not a.no_browser:
+        threading.Timer(0.8, webbrowser.open, args=(f'http://127.0.0.1:{port}',)).start()
     srv.serve_forever()
 
 
-def apri_dashboard(browser=True, silenzioso=False):
-    """Avvia la dashboard in un processo separato se non gira gia', poi la apre."""
-    attiva = porta_attiva()
-    if attiva:
-        if browser and not silenzioso:
-            webbrowser.open(f'http://127.0.0.1:{attiva}')
-        return attiva
-    args =[sys.executable, str(Path(__file__).resolve()), 'dashboard'] + ([] if browser else ['--senza-browser'])
+def open_dashboard(browser=True, quiet=False):
+    """Start the dashboard in a separate process if it is not running yet, then open it."""
+    active = active_port()
+    if active:
+        if browser and not quiet:
+            webbrowser.open(f'http://127.0.0.1:{active}')
+        return active
+    args = [sys.executable, str(Path(__file__).resolve()), 'dashboard'] + ([] if browser else ['--no-browser'])
     kw = {'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL, 'stdin': subprocess.DEVNULL}
     if platform.system() == 'Windows':
         kw['creationflags'] = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
@@ -659,91 +949,141 @@ def apri_dashboard(browser=True, silenzioso=False):
         kw['start_new_session'] = True
     subprocess.Popen(args, **kw)
     for _ in range(40):
-        attiva = porta_attiva()
-        if attiva:
-            return attiva
+        active = active_port()
+        if active:
+            return active
         time.sleep(0.25)
     return None
 
 
-def cmd_apri(a):
-    porta = apri_dashboard(browser=True)
-    print(f'http://127.0.0.1:{porta}' if porta else 'La dashboard non e partita: prova python ko.py dashboard')
+def cmd_open(a):
+    port = open_dashboard(browser=True)
+    print(f'http://127.0.0.1:{port}' if port else 'The dashboard did not start: try python ko.py dashboard')
 
 
 def cmd_setup(a):
     DATA.mkdir(parents=True, exist_ok=True)
     if not CONFIG.exists():
         save_json(CONFIG, DEFAULT_CONFIG)
-    esito = {'dati': str(DATA), 'config': str(CONFIG)}
+    result = {'data': str(DATA), 'config': str(CONFIG)}
     try:
         kbase()
-        esito['kaggle_cli'] = kaggle('--version').strip()
-        esito['utente'] = username()
+        result['kaggle_cli'] = kaggle('--version').strip()
+        result['user'] = username()
         q = quota_live()
-        esito['quota_gpu'] = q.get('gpu')
-        esito['pronto'] = True
+        result['gpu_quota'] = q.get('gpu')
+        result['ready'] = True
     except (SystemExit, RuntimeError) as e:
-        esito['pronto'] = False
-        esito['problema'] = str(e)
-    esito['pc'] = probe()
-    stampa(esito)
+        result['ready'] = False
+        result['problem'] = str(e)
+    result['pc'] = probe()
+    show(result)
+
+
+# ---------------------------------------------------------------- command line
+
+# Italian names from the original version: still accepted, but not shown in --help.
+ACTION_ALIASES = {'aggiungi': 'add', 'vedi': 'list', 'lancia': 'launch', 'svuota': 'clear',
+                  'imposta': 'set', 'togli': 'remove', 'aggiorna': 'refresh'}
+CREDIT_ACTION_ALIASES = {**ACTION_ALIASES, 'vedi': 'show'}  # 'vedi' meant "show" for credits, "list" for queue
+
+
+def _action(table):
+    return lambda s: table.get(s, s)
+
+
+def _expiry_type(s):
+    return EXPIRY_VALUES.get(s, s)
+
+
+def _opt(parser, flag, old_flag=None, **kw):
+    """add_argument with a hidden alias flag (the old Italian one) storing into the same dest."""
+    kw.setdefault('dest', flag.lstrip('-').replace('-', '_'))
+    parser.add_argument(flag, **kw)
+    if old_flag:
+        parser.add_argument(old_flag, **{**kw, 'help': argparse.SUPPRESS})
 
 
 def main():
-    ap = argparse.ArgumentParser(prog='ko.py', description='kaggle-offload: dove far girare il lavoro, e quanto costa')
-    sub = ap.add_subparsers(dest='cmd', required=True)
-    sub.add_parser('setup', help='controlla CLI, token e quota; crea ~/.kaggle-offload').set_defaults(f=cmd_setup)
-    sub.add_parser('probe', help='hardware di questo PC').set_defaults(f=cmd_probe)
-    sub.add_parser('quota', help='quota Kaggle della settimana').set_defaults(f=cmd_quota)
-    s = sub.add_parser('decidi', help='dove conviene far girare un lavoro')
-    s.add_argument('--vram', type=float, default=0, help='GB di VRAM che servono al modello')
-    s.add_argument('--solo-cpu', action='store_true', help='il lavoro non usa la GPU (Whisper su CPU, ffmpeg...)')
-    s.add_argument('--ore', type=float, default=0.5, help='durata stimata in ore')
-    s.set_defaults(f=cmd_decidi)
-    s = sub.add_parser('run', help='lancia un lavoro su Kaggle e aspetta il risultato')
+    migrate_quietly()
+    ap = argparse.ArgumentParser(prog='ko.py', description='kaggle-offload: where to run the work, and what it costs')
+    sub = ap.add_subparsers(dest='cmd', required=True, metavar='command')
+
+    def command(name, help, old=None):
+        p = sub.add_parser(name, help=help)
+        if old:  # hidden alias: registered in the parser map, so it works but is not listed in --help
+            sub._name_parser_map[old] = p
+        return p
+
+    command('setup', 'check CLI, token and quota; create ~/.kaggle-offload').set_defaults(f=cmd_setup)
+    command('probe', 'hardware of this PC').set_defaults(f=cmd_probe)
+    command('quota', 'Kaggle quota for the week').set_defaults(f=cmd_quota)
+
+    s = command('decide', 'where a job should run', old='decidi')
+    _opt(s, '--vram', type=float, default=0, help='GB of VRAM the model needs')
+    _opt(s, '--cpu-only', '--solo-cpu', action='store_true',
+         help='the job does not use the GPU (Whisper on CPU, ffmpeg...)')
+    _opt(s, '--hours', '--ore', type=float, default=0.5, help='estimated duration in hours')
+    s.set_defaults(f=cmd_decide)
+
+    s = command('run', 'launch a job on Kaggle and wait for the result')
     s.add_argument('--template')
-    s.add_argument('--jobs', help='file JSON con la lista dei lavori per il template')
-    s.add_argument('--script', help='script Python proprio da far girare cosi com\'e')
-    s.add_argument('--nome')
-    s.add_argument('--progetto', default='')
-    s.add_argument('--descrizione', default='')
+    s.add_argument('--jobs', help='JSON file with the list of jobs for the template')
+    s.add_argument('--script', help='your own Python script, run as it is')
+    _opt(s, '--name', '--nome')
+    _opt(s, '--project', '--progetto', default='')
+    _opt(s, '--description', '--descrizione', default='')
     s.add_argument('--acc', choices=['cpu', 'gpu', 'tpu'])
-    s.add_argument('--timeout', type=int, help='secondi massimi di esecuzione')
-    s.add_argument('--no-scarica', action='store_true', help='scarica solo log e metriche')
-    s.add_argument('--senza-cache', action='store_true')
+    s.add_argument('--timeout', type=int, help='maximum run time in seconds')
+    _opt(s, '--no-download', '--no-scarica', action='store_true', help='download only the log and metrics')
+    _opt(s, '--no-cache', '--senza-cache', action='store_true')
     s.add_argument('--no-internet', action='store_true')
     s.set_defaults(f=cmd_run)
-    s = sub.add_parser('coda', help='raggruppa lavori e lanciali insieme')
-    s.add_argument('azione', choices=['aggiungi', 'vedi', 'lancia', 'svuota'])
+
+    s = command('queue', 'group jobs and launch them together', old='coda')
+    s.add_argument('action', type=_action(ACTION_ALIASES), choices=['add', 'list', 'launch', 'clear'])
     s.add_argument('template', nargs='?')
-    s.add_argument('--job', help='un lavoro in JSON')
-    s.add_argument('--file', help='file JSON con uno o piu lavori')
-    s.add_argument('--progetto', default='')
-    s.set_defaults(f=cmd_coda)
-    s = sub.add_parser('cache', help='prepara la cache (pacchetti e pesi) di un template, in sola CPU')
+    s.add_argument('--job', help='one job as JSON')
+    s.add_argument('--file', help='JSON file with one or more jobs')
+    _opt(s, '--project', '--progetto', default='')
+    s.set_defaults(f=cmd_queue)
+
+    s = command('cache', 'build the cache (packages and weights) of a template, CPU only')
     s.add_argument('template')
-    s.add_argument('--progetto', default='')
+    _opt(s, '--project', '--progetto', default='')
     s.set_defaults(f=cmd_cache)
-    s = sub.add_parser('bench', help='misura i GFLOPS di PC, Kaggle CPU e Kaggle GPU')
-    s.add_argument('--solo-cpu', action='store_true', help='non usa quota GPU')
+
+    s = command('bench', 'measure GFLOPS of the PC, Kaggle CPU and Kaggle GPU')
+    _opt(s, '--cpu-only', '--solo-cpu', action='store_true', help='skip the GPU run (uses no GPU quota)')
     s.set_defaults(f=cmd_bench)
-    s = sub.add_parser('crediti', help='conto dei crediti di tutti i servizi')
-    s.add_argument('azione', nargs='?', default='vedi', choices=['vedi', 'imposta', 'togli', 'aggiorna'])
-    s.add_argument('--servizio')
-    s.add_argument('--residuo', type=float)
-    s.add_argument('--totale', type=float)
-    s.add_argument('--unita')
-    s.add_argument('--scadenza', help='AAAA-MM-GG')
-    s.add_argument('--tipo-scadenza', dest='tipo_scadenza', help='"scade" oppure "si ricarica"')
-    s.add_argument('--nota')
-    s.set_defaults(f=cmd_crediti)
-    s = sub.add_parser('dashboard', help='serve la dashboard (resta in primo piano)')
-    s.add_argument('--senza-browser', action='store_true')
+
+    s = command('credits', 'credit balance of all services', old='crediti')
+    s.add_argument('action', nargs='?', default='show', type=_action(CREDIT_ACTION_ALIASES),
+                   choices=['show', 'set', 'remove', 'refresh'])
+    _opt(s, '--service', '--servizio')
+    _opt(s, '--remaining', '--residuo', type=float)
+    _opt(s, '--total', '--totale', type=float)
+    _opt(s, '--unit', '--unita')
+    _opt(s, '--expires', '--scadenza', help='YYYY-MM-DD')
+    _opt(s, '--expiry-type', '--tipo-scadenza', type=_expiry_type, choices=['expires', 'renews'],
+         help='"expires" or "renews"')
+    _opt(s, '--note', '--nota')
+    s.set_defaults(f=cmd_credits)
+
+    s = command('dashboard', 'serve the dashboard (stays in the foreground)')
+    _opt(s, '--no-browser', '--senza-browser', action='store_true')
     s.set_defaults(f=cmd_dashboard)
-    sub.add_parser('apri', help='avvia la dashboard in background e la apre').set_defaults(f=cmd_apri)
+
+    command('open', 'start the dashboard in the background and open it', old='apri').set_defaults(f=cmd_open)
     a = ap.parse_args()
     a.f(a)
+
+
+def migrate_quietly():
+    try:
+        migrate_data_dir()
+    except Exception as e:  # a migration problem must never block a command
+        print(f'warning: data migration skipped ({e})', file=sys.stderr)
 
 
 if __name__ == '__main__':

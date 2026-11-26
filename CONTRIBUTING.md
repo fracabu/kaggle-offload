@@ -1,68 +1,66 @@
-# Contribuire a kaggle-offload
+# Contributing to kaggle-offload
 
-Grazie se sei qui. L'obiettivo del progetto è semplice: far usare a più persone possibile le ore di GPU gratuite di Kaggle, senza sprecarle. Ogni contributo che va in quella direzione è benvenuto.
+Thanks for being here. The goal is simple: help as many people as possible use Kaggle's free GPU hours, without wasting them. Any contribution in that direction is welcome.
 
-> **In English:** contributions in English are welcome. Open an issue or a pull request and write in the language you prefer.
+## What helps most
 
-## Cosa serve di più
+1. **Templates for new models.** This is the most useful contribution. Wanted:
+   - Whisper (batch transcription of audio and video);
+   - SDXL or Flux (batch image generation);
+   - LoRA training (consistent images of a product or a character);
+   - image and video upscaling;
+   - a small LLM for batch text work (summarize, classify, translate, extract).
+2. **Tests on macOS and Linux.** The skill has only been tested on Windows 11. Running `ko.py setup`, `ko.py bench --cpu-only` and `ko.py open` on another system makes a valuable issue.
+3. **Fixes and ideas.** A bug, a Kaggle limit that changed, a way to waste less quota.
 
-1. **Template per nuovi modelli.** È il contributo più utile. Quelli che mancano:
-   - Whisper (trascrizione di audio e video a lotti);
-   - Flux o SDXL (immagini a lotti);
-   - addestramento LoRA (immagini coerenti di un prodotto o di un personaggio);
-   - upscaling di immagini e video;
-   - un modello linguistico piccolo per elaborare testi a lotti.
-2. **Prove su macOS e Linux.** La skill è collaudata solo su Windows 11. `ko.py setup`, `ko.py bench` e `ko.py apri` su un altro sistema bastano per una issue preziosa.
-3. **Correzioni e idee.** Un bug, un limite di Kaggle cambiato, un modo per sprecare meno quota.
+## Writing a template
 
-## Come scrivere un template
+A template is a folder in `templates/<name>/` with two files.
 
-Un template è una cartella in `templates/<nome>/` con due file.
-
-**`main.py`**: lo script che gira su Kaggle.
-- I lavori arrivano in `JOBS = json.loads('__JOBS__')`: `ko.py` sostituisce `'__JOBS__'` con la lista dei lavori in JSON. Un lancio esegue tutti i lavori della lista, così installazione e caricamento del modello si pagano una volta.
-- Le uscite vanno in `/kaggle/working`.
-- Scrivi `/kaggle/working/metriche.json` con almeno `preparazione_s` (installazione e caricamento) e `calcolo_s` (lavoro vero) e, se ha senso, `prodotto: {"quantita": ..., "unita": "..."}` (per esempio secondi di audio o immagini). Da qui la dashboard ricava velocità e costo di preparazione.
-- Se usi la cache, cercala con `ko-cache.json` sotto `/kaggle/input` e, se non c'è, installa da internet: guarda `templates/qwen-tts/main.py`.
-- Stampa i progressi con `print(..., flush=True)`.
-- Nessuna chiave nel codice: se servono, vanno nei Secrets di Kaggle.
+**`main.py`**, the script that runs on Kaggle:
+- Jobs arrive in `JOBS = json.loads('__JOBS__')`: `ko.py` replaces `'__JOBS__'` with the job list as JSON. One run processes the whole list, so installation and model loading are paid once.
+- Outputs go to `/kaggle/working`.
+- Write `/kaggle/working/metrics.json` with at least `prep_s` (installing and loading) and `compute_s` (the actual work) and, when it makes sense, `product: {"amount": ..., "unit": "..."}` (for example seconds of audio, or images). The dashboard derives speed and setup overhead from these.
+- If you use the cache, look for `ko-cache.json` under `/kaggle/input` and fall back to installing from the internet when it isn't there: see `templates/qwen-tts/main.py`.
+- Print progress with `print(..., flush=True)`.
+- No keys in the code: if you need any, use Kaggle Secrets.
 
 **`template.json`**:
 
 ```json
 {
- "descrizione": "cosa fa, in una riga",
+ "description": "what it does, in one line",
  "acc": "gpu",
  "vram_gb": 8,
- "unita": "secondi di audio",
- "cache_pip": ["pacchetto"],
- "cache_hf": ["organizzazione/modello"],
- "collaudato": false,
- "origine": "quando e come è stato provato, con i tempi"
+ "unit": "seconds of audio",
+ "cache_pip": ["package"],
+ "cache_hf": ["organization/model"],
+ "tested": false,
+ "origin": "when and how it was tested, with timings"
 }
 ```
 
-**La regola più importante:** `"collaudato": true` solo dopo un lancio vero su Kaggle andato a buon fine. Nella pull request scrivi i numeri di quel lancio: GPU, sessione, preparazione, calcolo, quota consumata. Li trovi nell'output di `ko.py run`.
+**The most important rule:** set `"tested": true` only after a real run on Kaggle succeeded. In the pull request, include that run's numbers: GPU, session length, setup, compute, quota used. You'll find them in the output of `ko.py run`.
 
-## Regole per il codice
+## Code rules
 
-- `scripts/ko.py` usa **solo la libreria standard** di Python, più la Kaggle CLI. Niente dipendenze nuove sul PC: i pacchetti pesanti vanno nei template, su Kaggle.
-- La dashboard (`scripts/dashboard.html`) è un file solo, senza librerie esterne né CDN.
-- Nomi, messaggi e commenti sono in italiano. Se scrivi in inglese va bene lo stesso: li adattiamo noi.
-- I dati dell'utente stanno in `~/.kaggle-offload/` e non entrano mai nel repo: niente token, registri dei lanci o crediti nelle pull request.
-- La skill non legge il token Kaggle né chiavi di altri servizi da file di altri progetti. Le chiavi le collega l'utente.
+- `scripts/ko.py` uses **only the Python standard library**, plus the Kaggle CLI. No new dependencies on the user's machine: heavy packages belong in templates, on Kaggle.
+- The dashboard (`scripts/dashboard.html`) is a single file, with no external libraries or CDNs.
+- User data lives in `~/.kaggle-offload/` and never enters the repo: no tokens, run logs or credits in pull requests.
+- The skill never reads the Kaggle token, nor keys of other services from other projects' files. Keys are linked by the user.
+- The original author works in Italian, so Italian command names still work as aliases. New code and docs are in English.
 
-## Il diario
+## The devlog
 
-[`DIARIO.md`](DIARIO.md) racconta come si evolve il progetto, con i numeri veri. Se il tuo contributo ha insegnato qualcosa (un tempo misurato, un errore, un limite), aggiungi una voce datata.
+[`DEVLOG.md`](DEVLOG.md) tells how the project evolves, with real numbers. If your contribution taught something (a measured timing, an error, a limit), add a dated entry.
 
-## Come proporre una modifica
+## Proposing a change
 
-1. Apri una issue per discutere modifiche grandi. Per un template nuovo o una correzione piccola puoi andare dritto alla pull request.
-2. Fai un fork, crea un branch (`template-whisper`, `fix-porta-linux`...), fai le modifiche.
-3. Controlla che `python scripts/ko.py setup` e `python scripts/ko.py apri` funzionino ancora.
-4. Apri la pull request spiegando cosa cambia e, per un template, con i numeri del lancio di prova.
+1. Open an issue to discuss larger changes. For a new template or a small fix you can go straight to a pull request.
+2. Fork, create a branch (`template-whisper`, `fix-port-linux`...), make your changes.
+3. Check that `python scripts/ko.py setup` and `python scripts/ko.py open` still work.
+4. Open the pull request explaining what changes and, for a template, with the numbers from the test run.
 
-## Comportamento
+## Conduct
 
-Si discute nel merito, con gentilezza. Non sono ammessi attacchi personali, molestie o contenuti offensivi.
+Discuss the work, kindly. Personal attacks, harassment and offensive content are not welcome.

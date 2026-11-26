@@ -1,6 +1,6 @@
 {
- "descrizione": "Benchmark GFLOPS: moltiplicazioni di matrici fp32 su CPU, fp32 e fp16 su GPU",
+ "description": "GFLOPS benchmark: fp32 matrix multiplications on CPU, fp32 and fp16 on GPU",
  "acc": "gpu",
- "unita": null,
- "collaudato": false
+ "unit": null,
+ "tested": false
 }

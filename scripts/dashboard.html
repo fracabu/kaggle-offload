@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="it">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -101,70 +101,70 @@
   <header>
     <h1>kaggle-offload</h1>
     <span class="sub" id="host"></span>
-    <span class="sub live"><span class="dot" id="dot"></span><span id="agg">in collegamento…</span></span>
+    <span class="sub live"><span class="dot" id="dot"></span><span id="updated">connecting…</span></span>
   </header>
 
   <div class="tiles">
     <section>
-      <div class="label">GPU Kaggle, questa settimana</div>
-      <div class="big" id="gpu-usate">–</div>
+      <div class="label">Kaggle GPU, this week</div>
+      <div class="big" id="gpu-used">–</div>
       <div class="meter"><div id="gpu-meter" style="width:0"></div></div>
-      <div class="note" id="gpu-ricarica"></div>
+      <div class="note" id="gpu-refresh"></div>
     </section>
     <section>
-      <div class="label">Risparmio stimato</div>
-      <div class="big" id="risp">–</div>
-      <div class="note" id="risp-nota"></div>
+      <div class="label">Estimated savings</div>
+      <div class="big" id="savings">–</div>
+      <div class="note" id="savings-note"></div>
     </section>
     <section>
-      <div class="label">PC lasciato libero</div>
-      <div class="big" id="liberato">–</div>
-      <div class="note" id="liberato-nota"></div>
+      <div class="label">PC kept free</div>
+      <div class="big" id="freed">–</div>
+      <div class="note" id="freed-note"></div>
     </section>
     <section>
-      <div class="label">TPU Kaggle, questa settimana</div>
-      <div class="big" id="tpu-usate">–</div>
+      <div class="label">Kaggle TPU, this week</div>
+      <div class="big" id="tpu-used">–</div>
       <div class="meter"><div id="tpu-meter" style="width:0"></div></div>
-      <div class="note" id="tpu-nota"></div>
+      <div class="note" id="tpu-note"></div>
     </section>
   </div>
 
-  <section id="sez-corso">
-    <h2>In corso</h2>
-    <div id="corso"></div>
+  <section id="sec-running">
+    <h2>Running now</h2>
+    <div id="running"></div>
   </section>
 
   <div class="two">
     <section>
-      <h2>Velocità: quanto calcola ogni macchina</h2>
-      <div class="sub">Miliardi di operazioni al secondo (GFLOPS) su moltiplicazioni di matrici. Più lunga la barra, più veloce.</div>
+      <h2>Speed: how fast each machine computes</h2>
+      <div class="sub">Billions of operations per second (GFLOPS) on matrix multiplications. The longer the bar, the faster.</div>
       <div id="bench"></div>
     </section>
     <section>
-      <h2>Minuti di GPU per giorno</h2>
-      <div class="sub" id="giorni-sub">Ultimi 7 giorni, dai lanci registrati.</div>
-      <div class="cols" id="giorni"></div>
-      <div class="xlabels" id="giorni-x"></div>
+      <h2>GPU minutes per day</h2>
+      <div class="sub" id="days-sub">Last 7 days, from the recorded runs.</div>
+      <div class="cols" id="days"></div>
+      <div class="xlabels" id="days-x"></div>
     </section>
   </div>
 
   <section>
-    <h2>Lanci</h2>
-    <div class="sub">Preparazione (installazione e caricamento del modello) contro calcolo vero: raggruppare i lavori serve ad accorciare la prima.</div>
-    <div class="legend"><span style="--c:var(--series-1-soft)">preparazione</span><span style="--c:var(--series-1)">calcolo</span></div>
-    <div class="scroll"><table id="lanci"></table></div>
+    <h2>Runs</h2>
+    <div class="sub">Preparation (installing and loading the model) versus the actual compute: batching jobs is what shortens the first.</div>
+    <div class="legend"><span style="--c:var(--series-1-soft)">preparation</span><span style="--c:var(--series-1)">compute</span></div>
+    <div class="scroll"><table id="runs"></table></div>
   </section>
 
   <div class="two">
     <section>
-      <h2>Crediti</h2>
-      <div class="sub">La quota Kaggle si aggiorna da sola (ElevenLabs anche, se colleghi la chiave); gli altri con <code>ko.py crediti imposta</code>.</div>
-      <div class="scroll"><table id="crediti"></table></div>
+      <h2>Credits</h2>
+      <div class="sub">The Kaggle quota updates by itself (so does ElevenLabs, if you link the key); the others with <code>ko.py credits set</code>.</div>
+      <div class="scroll"><table id="credits"></table></div>
     </section>
     <section>
-      <h2>Questo PC</h2>
+      <h2>This PC</h2>
       <div id="pc"></div>
-      <h2 style="margin-top:18px">Cache e coda</h2>
+      <h2 style="margin-top:18px">Cache and queue</h2>
       <div id="cache"></div>
     </section>
   </div>
@@ -173,7 +173,7 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-const nf = (v, d = 1) => (v == null || isNaN(v)) ? '–' : Number(v).toLocaleString('it-IT', { maximumFractionDigits: d, minimumFractionDigits: 0 });
+const nf = (v, d = 1) => (v == null || isNaN(v)) ? '–' : Number(v).toLocaleString('en-US', { maximumFractionDigits: d, minimumFractionDigits: 0 });
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -183,7 +183,7 @@ const el = (tag, attrs = {}, ...kids) => {
   for (const k of kids.flat()) if (k != null) e.append(k instanceof Node ? k : document.createTextNode(String(k)));
   return e;
 };
-const durata = (s) => {
+const duration = (s) => {
   if (s == null) return '–';
   s = Math.round(s);
   if (s < 60) return s + ' s';
@@ -192,210 +192,210 @@ const durata = (s) => {
   const h = Math.floor(m / 60);
   return h + ' h ' + (m % 60) + ' min';
 };
-const quando = (iso) => iso ? new Date(iso).toLocaleString('it-IT', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '–';
+const when = (iso) => iso ? new Date(iso).toLocaleString('en-GB', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '–';
 const status = (cls, icon, text) => el('span', { class: 'status s-' + cls }, el('i', {}, icon), text);
-const DOVE = { gpu: 'Kaggle GPU', cpu: 'Kaggle CPU', tpu: 'Kaggle TPU' };
-const STATI = {
-  complete: ['good', '●', 'fatto'], error: ['critical', '✕', 'errore'], running: ['run', '▶', 'calcola'],
-  queued: ['warning', '▲', 'in fila'], invio: ['run', '▶', 'invio'], cancel_acknowledged: ['serious', '■', 'annullato'],
-  cancel_requested: ['serious', '■', 'annullato'], abbandonato: ['critical', '✕', 'abbandonato']
+const WHERE = { gpu: 'Kaggle GPU', cpu: 'Kaggle CPU', tpu: 'Kaggle TPU' };
+const STATES = {
+  complete: ['good', '●', 'done'], error: ['critical', '✕', 'error'], running: ['run', '▶', 'running'],
+  queued: ['warning', '▲', 'queued'], sending: ['run', '▶', 'sending'], cancel_acknowledged: ['serious', '■', 'cancelled'],
+  cancel_requested: ['serious', '■', 'cancelled'], abandoned: ['critical', '✕', 'abandoned']
 };
-const statoDi = (s) => status(...(STATI[s] || ['run', '▶', s]));
+const stateOf = (s) => status(...(STATES[s] || ['run', '▶', s]));
 
-function oreGpu(r) {
+function gpuHours(r) {
   if (r.acc !== 'gpu') return 0;
-  const q = r.consumo_h && r.consumo_h.gpu;
-  return q > 0 ? q : (r.sessione_s || 0) / 3600;
+  const q = r.quota_used_h && r.quota_used_h.gpu;
+  return q > 0 ? q : (r.session_s || 0) / 3600;
 }
 
-let ultimo = null;
 const tip = $('tip');
-function tipOn(e, testo) { tip.textContent = testo; tip.style.opacity = 1; tip.style.left = (e.clientX + 12) + 'px'; tip.style.top = (e.clientY + 12) + 'px'; }
+function tipOn(e, text) { tip.textContent = text; tip.style.opacity = 1; tip.style.left = (e.clientX + 12) + 'px'; tip.style.top = (e.clientY + 12) + 'px'; }
 function tipOff() { tip.style.opacity = 0; }
 
 function render(S) {
-  ultimo = S;
   const cfg = S.config || {};
   const p = S.probe || {};
-  $('host').textContent = p.host ? `su ${p.host}` : '';
+  $('host').textContent = p.host ? `on ${p.host}` : '';
   const q = S.quota;
-  const lanci = S.lanci || [];
-  const ricarica = q && q.gpu ? new Date(q.gpu.ricarica) : null;
-  const inizioSett = ricarica ? new Date(ricarica - 7 * 864e5) : new Date(Date.now() - 7 * 864e5);
-  const sett = lanci.filter(r => new Date(r.push) >= inizioSett);
+  const runs = S.runs || [];
+  const refresh = q && q.gpu ? new Date(q.gpu.refresh_at) : null;
+  const weekStart = refresh ? new Date(refresh - 7 * 864e5) : new Date(Date.now() - 7 * 864e5);
+  const week = runs.filter(r => new Date(r.pushed_at) >= weekStart);
 
   // GPU / TPU
   if (q && q.gpu) {
-    $('gpu-usate').replaceChildren(nf(q.gpu.usate, 2) + ' h ', el('small', {}, `su ${nf(q.gpu.totali, 0)} h`));
-    $('gpu-meter').style.width = Math.min(100, q.gpu.usate / q.gpu.totali * 100) + '%';
-    const tra = ricarica - Date.now();
-    const g = Math.floor(tra / 864e5), h = Math.floor((tra % 864e5) / 36e5);
-    $('gpu-ricarica').textContent = `Restano ${nf(q.gpu.rimaste, 2)} h. Si ricarica ${ricarica.toLocaleString('it-IT', { weekday: 'long', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' })} (tra ${g} g ${h} h).`;
-    $('tpu-usate').replaceChildren(nf(q.tpu.usate, 2) + ' h ', el('small', {}, `su ${nf(q.tpu.totali, 0)} h`));
-    $('tpu-meter').style.width = Math.min(100, q.tpu.usate / q.tpu.totali * 100) + '%';
-    $('tpu-nota').textContent = `Restano ${nf(q.tpu.rimaste, 2)} h, massimo 9 h per sessione.` + (q.errore ? ' Quota non aggiornata: ' + q.errore : '');
+    $('gpu-used').replaceChildren(nf(q.gpu.used, 2) + ' h ', el('small', {}, `of ${nf(q.gpu.total, 0)} h`));
+    $('gpu-meter').style.width = Math.min(100, q.gpu.used / q.gpu.total * 100) + '%';
+    const left = refresh - Date.now();
+    const d = Math.floor(left / 864e5), h = Math.floor((left % 864e5) / 36e5);
+    $('gpu-refresh').textContent = `${nf(q.gpu.remaining, 2)} h left. Resets ${refresh.toLocaleString('en-GB', { weekday: 'long', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' })} (in ${d} d ${h} h).`;
+    if (q.tpu) {
+      $('tpu-used').replaceChildren(nf(q.tpu.used, 2) + ' h ', el('small', {}, `of ${nf(q.tpu.total, 0)} h`));
+      $('tpu-meter').style.width = Math.min(100, q.tpu.used / q.tpu.total * 100) + '%';
+      $('tpu-note').textContent = `${nf(q.tpu.remaining, 2)} h left, 9 h maximum per session.` + (q.error ? ' Quota not updated: ' + q.error : '');
+    }
   } else {
-    $('gpu-usate').textContent = '–';
-    $('gpu-ricarica').textContent = 'Quota non ancora letta: lancia python ko.py setup';
+    $('gpu-used').textContent = '–';
+    $('gpu-refresh').textContent = 'Quota not read yet: run python ko.py setup';
   }
 
-  // Risparmio e PC liberato
-  const prezzo = cfg.prezzo_gpu_ora || 0, val = cfg.valuta || 'USD';
-  const oreTot = lanci.reduce((a, r) => a + oreGpu(r), 0);
-  const oreSett = sett.reduce((a, r) => a + oreGpu(r), 0);
-  const fmtSoldi = (v) => v.toLocaleString('it-IT', { style: 'currency', currency: val, minimumFractionDigits: 2 });
-  $('risp').textContent = fmtSoldi(oreTot * prezzo);
-  let nota = `${nf(oreTot, 2)} h di GPU in tutto (${nf(oreSett, 2)} questa settimana) a ${fmtSoldi(prezzo)}/h, il prezzo di ${cfg.fonte_prezzo || 'riferimento'}.`;
-  if (cfg.cambio_eur) nota += ` Circa ${(oreTot * prezzo * cfg.cambio_eur).toLocaleString('it-IT', { style: 'currency', currency: 'EUR' })}.`;
-  $('risp-nota').textContent = nota;
-  const sCpu = lanci.filter(r => r.acc === 'cpu').reduce((a, r) => a + (r.sessione_s || 0), 0);
-  const sTutti = lanci.reduce((a, r) => a + (r.sessione_s || 0), 0);
-  $('liberato').textContent = durata(sTutti);
-  $('liberato-nota').textContent = `Tempo di calcolo fatto su Kaggle invece che qui, ${durata(sCpu)} in sola CPU (fuori quota). ${lanci.length} lanci registrati, ${sett.length} questa settimana.`;
+  // Savings and PC freed
+  const price = cfg.gpu_price_per_hour || 0, cur = cfg.currency || 'USD';
+  const hoursAll = runs.reduce((a, r) => a + gpuHours(r), 0);
+  const hoursWeek = week.reduce((a, r) => a + gpuHours(r), 0);
+  const money = (v) => v.toLocaleString('en-US', { style: 'currency', currency: cur, minimumFractionDigits: 2 });
+  $('savings').textContent = money(hoursAll * price);
+  let note = `${nf(hoursAll, 2)} GPU hours in total (${nf(hoursWeek, 2)} this week) at ${money(price)}/h` + (cfg.price_source ? `, the price of ${cfg.price_source}.` : ' (reference price).');
+  if (cfg.eur_rate) note += ` About ${(hoursAll * price * cfg.eur_rate).toLocaleString('en-US', { style: 'currency', currency: 'EUR' })}.`;
+  $('savings-note').textContent = note;
+  const cpuSec = runs.filter(r => r.acc === 'cpu').reduce((a, r) => a + (r.session_s || 0), 0);
+  const allSec = runs.reduce((a, r) => a + (r.session_s || 0), 0);
+  $('freed').textContent = duration(allSec);
+  $('freed-note').textContent = `Compute time spent on Kaggle instead of here, ${duration(cpuSec)} of it CPU-only (outside the quota). ${runs.length} runs recorded, ${week.length} this week.`;
 
-  // In corso
-  const corso = Object.entries(S.in_corso || {});
-  $('sez-corso').style.display = corso.length ? '' : 'none';
-  $('corso').replaceChildren(...corso.map(([id, r]) => {
-    const t0 = new Date(r.push);
-    const calc = r.inizio_calcolo ? new Date(r.inizio_calcolo) : null;
+  // Running now
+  const running = Object.entries(S.running || {});
+  $('sec-running').style.display = running.length ? '' : 'none';
+  $('running').replaceChildren(...running.map(([id, r]) => {
+    const t0 = new Date(r.pushed_at);
+    const calc = r.compute_started_at ? new Date(r.compute_started_at) : null;
     return el('div', { class: 'run' },
-      el('div', {}, el('b', {}, r.descrizione || id), ' ', statoDi(r.stato),
-        el('div', { class: 'sub' }, `${DOVE[r.acc] || r.acc} · ${r.progetto || 'senza progetto'} · inviato ${quando(r.push)}` + (calc ? ` · in calcolo da ${durata((Date.now() - calc) / 1000)}` : ' · in attesa di una macchina'))),
-      el('div', { class: 't', 'data-t0': t0.toISOString() }, durata((Date.now() - t0) / 1000)));
+      el('div', {}, el('b', {}, r.description || id), ' ', stateOf(r.status),
+        el('div', { class: 'sub' }, `${WHERE[r.acc] || r.acc} · ${r.project || 'no project'} · sent ${when(r.pushed_at)}` + (calc ? ` · computing for ${duration((Date.now() - calc) / 1000)}` : ' · waiting for a machine'))),
+      el('div', { class: 't', 'data-t0': t0.toISOString() }, duration((Date.now() - t0) / 1000)));
   }));
 
   // Benchmark
   const B = S.bench || {};
-  const righe = [];
-  if (B.pc) righe.push({ nome: B.pc.nome, det: B.pc.dettaglio, v: B.pc.gflops_fp32, prec: 'fp32' });
-  if (B.kaggle_cpu) righe.push({ nome: B.kaggle_cpu.nome, det: B.kaggle_cpu.dettaglio, v: B.kaggle_cpu.gflops_fp32, prec: 'fp32' });
+  const rows = [];
+  if (B.pc) rows.push({ name: B.pc.name, det: B.pc.detail, v: B.pc.gflops_fp32, prec: 'fp32' });
+  if (B.kaggle_cpu) rows.push({ name: B.kaggle_cpu.name, det: B.kaggle_cpu.detail, v: B.kaggle_cpu.gflops_fp32, prec: 'fp32' });
   if (B.kaggle_gpu) {
-    righe.push({ nome: B.kaggle_gpu.nome + ', fp32', det: B.kaggle_gpu.dettaglio, v: B.kaggle_gpu.gflops_fp32, prec: 'fp32' });
-    if (B.kaggle_gpu.gflops_fp16) righe.push({ nome: B.kaggle_gpu.nome + ', fp16', det: 'mezza precisione, quella dei modelli AI', v: B.kaggle_gpu.gflops_fp16, prec: 'fp16' });
+    rows.push({ name: B.kaggle_gpu.name + ', fp32', det: B.kaggle_gpu.detail, v: B.kaggle_gpu.gflops_fp32, prec: 'fp32' });
+    if (B.kaggle_gpu.gflops_fp16) rows.push({ name: B.kaggle_gpu.name + ', fp16', det: 'half precision, the one AI models use', v: B.kaggle_gpu.gflops_fp16, prec: 'fp16' });
   }
   const base = B.pc && B.pc.gflops_fp32;
-  const max = Math.max(1, ...righe.map(r => r.v || 0));
-  if (!righe.length || righe.every(r => !r.v)) {
-    $('bench').replaceChildren(el('p', { class: 'empty' }, 'Nessuna misura ancora. Lancia ', el('code', {}, 'python ko.py bench'), ': pochi minuti, meno di 0,05 h di quota.'));
+  const max = Math.max(1, ...rows.map(r => r.v || 0));
+  if (!rows.length || rows.every(r => !r.v)) {
+    $('bench').replaceChildren(el('p', { class: 'empty' }, 'No measurements yet. Run ', el('code', {}, 'python ko.py bench'), ': a few minutes, less than 0.05 h of quota.'));
   } else {
     const g = el('div', { class: 'hbars' });
-    for (const r of righe) {
+    for (const r of rows) {
       const x = base && r.v ? r.v / base : null;
       const bar = el('div', { class: 'bar', style: `width:${(r.v || 0) / max * 100}%` });
-      const riga = el('div', { class: 'hbar' }, bar, el('span', { class: 'val' }, el('b', {}, nf(r.v, 0)), ' GFLOPS', x && r !== righe[0] ? ` · ${nf(x, x < 10 ? 1 : 0)}× il PC` : ''));
-      riga.addEventListener('mousemove', e => tipOn(e, `${r.nome}: ${nf(r.v, 0)} GFLOPS ${r.prec}${x ? ', ' + nf(x, 1) + ' volte questo PC' : ''}`));
-      riga.addEventListener('mouseleave', tipOff);
-      g.append(el('div', { class: 'name' }, r.nome, el('span', {}, r.det || '')), riga);
+      const line = el('div', { class: 'hbar' }, bar, el('span', { class: 'val' }, el('b', {}, nf(r.v, 0)), ' GFLOPS', x && r !== rows[0] ? ` · ${nf(x, x < 10 ? 1 : 0)}× the PC` : ''));
+      line.addEventListener('mousemove', e => tipOn(e, `${r.name}: ${nf(r.v, 0)} GFLOPS ${r.prec}${x ? ', ' + nf(x, 1) + ' times this PC' : ''}`));
+      line.addEventListener('mouseleave', tipOff);
+      g.append(el('div', { class: 'name' }, r.name, el('span', {}, r.det || '')), line);
     }
     $('bench').replaceChildren(g);
   }
 
-  // Minuti GPU per giorno (ultimi 7)
-  const giorni = [];
+  // GPU minutes per day (last 7)
+  const days = [];
   for (let i = 6; i >= 0; i--) {
     const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i);
-    giorni.push({ d, min: 0, n: 0 });
+    days.push({ d, min: 0, n: 0 });
   }
-  for (const r of lanci) {
-    const t = new Date(r.push); t.setHours(0, 0, 0, 0);
-    const g = giorni.find(x => +x.d === +t);
-    if (g && r.acc === 'gpu') { g.min += oreGpu(r) * 60; g.n++; }
+  for (const r of runs) {
+    const t = new Date(r.pushed_at); t.setHours(0, 0, 0, 0);
+    const g = days.find(x => +x.d === +t);
+    if (g && r.acc === 'gpu') { g.min += gpuHours(r) * 60; g.n++; }
   }
-  const maxMin = Math.max(1, ...giorni.map(g => g.min));
-  $('giorni').replaceChildren(...giorni.map(g => {
+  const maxMin = Math.max(1, ...days.map(g => g.min));
+  $('days').replaceChildren(...days.map(g => {
     const c = el('div', { class: 'col' }, el('div', { class: 'v' }, g.min ? nf(g.min, g.min < 10 ? 1 : 0) : ''), el('div', { class: 'bar', style: `height:${g.min / maxMin * 85}%` }));
-    c.addEventListener('mousemove', e => tipOn(e, `${g.d.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'numeric' })}: ${nf(g.min, 1)} min di GPU in ${g.n} lanci`));
+    c.addEventListener('mousemove', e => tipOn(e, `${g.d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'numeric' })}: ${nf(g.min, 1)} GPU min in ${g.n} runs`));
     c.addEventListener('mouseleave', tipOff);
     return c;
   }));
-  $('giorni-x').replaceChildren(...giorni.map(g => el('div', {}, g.d.toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric' }))));
+  $('days-x').replaceChildren(...days.map(g => el('div', {}, g.d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric' }))));
 
-  // Tabella lanci
+  // Runs table
   const th = (t, n) => el('th', { class: n ? 'n' : '' }, t);
-  const head = el('tr', {}, th('Quando'), th('Lavoro'), th('Dove'), th('Stato'), th('Attesa', 1), th('Sessione', 1), th('Preparazione / calcolo'), th('Prodotto', 1), th('Quota', 1));
-  const rows = lanci.slice().reverse().slice(0, 60).map(r => {
-    const m = r.metriche || {};
-    const prep = m.preparazione_s, calc = m.calcolo_s;
+  const head = el('tr', {}, th('When'), th('Job'), th('Where'), th('Status'), th('Wait', 1), th('Session', 1), th('Preparation / compute'), th('Output', 1), th('Quota', 1));
+  const body = runs.slice().reverse().slice(0, 60).map(r => {
+    const m = r.metrics || {};
+    const prep = m.prep_s, calc = m.compute_s;
     let split = '–';
     if (prep != null && calc != null && prep + calc > 0) {
       const tot = prep + calc;
-      split = el('div', {}, `${durata(prep)} / ${durata(calc)}`,
+      split = el('div', {}, `${duration(prep)} / ${duration(calc)}`,
         el('div', { class: 'split' }, el('div', { class: 'prep', style: `width:${prep / tot * 100}%` }), el('div', { class: 'calc', style: `width:${calc / tot * 100}%` })));
     }
     let prod = '–';
-    if (m.prodotto && m.prodotto.quantita) {
-      prod = `${nf(m.prodotto.quantita)} ${m.prodotto.unita}` + (calc ? ` · ${nf(m.prodotto.quantita / calc, 2)} al s` : '');
+    if (m.product && m.product.amount) {
+      prod = `${nf(m.product.amount)} ${m.product.unit}` + (calc ? ` · ${nf(m.product.amount / calc, 2)} per s` : '');
     } else if (m.gflops_fp16 || m.gflops_fp32) {
       prod = `${nf(m.gflops_fp16 || m.gflops_fp32, 0)} GFLOPS`;
     }
-    const quota = r.acc === 'gpu' ? nf(oreGpu(r), 2) + ' h' : (r.acc === 'cpu' ? 'fuori quota' : nf((r.consumo_h || {}).tpu, 2) + ' h');
+    const quota = r.acc === 'gpu' ? nf(gpuHours(r), 2) + ' h' : (r.acc === 'cpu' ? 'outside quota' : nf((r.quota_used_h || {}).tpu, 2) + ' h');
     return el('tr', {},
-      el('td', {}, quando(r.push)),
-      el('td', {}, r.descrizione || r.ref, el('div', { class: 'sub' }, r.progetto || '')),
-      el('td', {}, DOVE[r.acc] || r.acc, el('div', { class: 'sub' }, m.dispositivo || '')),
-      el('td', {}, statoDi(r.stato)),
-      el('td', { class: 'n' }, durata(r.attesa_s)),
-      el('td', { class: 'n' }, durata(r.sessione_s)),
+      el('td', {}, when(r.pushed_at)),
+      el('td', {}, r.description || r.ref, el('div', { class: 'sub' }, r.project || '')),
+      el('td', {}, WHERE[r.acc] || r.acc, el('div', { class: 'sub' }, m.device || '')),
+      el('td', {}, stateOf(r.status)),
+      el('td', { class: 'n' }, duration(r.wait_s)),
+      el('td', { class: 'n' }, duration(r.session_s)),
       el('td', {}, split),
       el('td', { class: 'n' }, prod),
       el('td', { class: 'n' }, quota));
   });
-  $('lanci').replaceChildren(el('thead', {}, head), el('tbody', {}, rows.length ? rows : el('tr', {}, el('td', { colSpan: 9, class: 'sub' }, 'Ancora nessun lancio registrato.'))));
+  $('runs').replaceChildren(el('thead', {}, head), el('tbody', {}, body.length ? body : el('tr', {}, el('td', { colSpan: 9, class: 'sub' }, 'No runs recorded yet.'))));
 
-  // Crediti
-  const soglia = cfg.soglia_scadenza_giorni || 5;
-  const oggi = new Date(); oggi.setHours(0, 0, 0, 0);
-  const cr = (S.crediti || []).slice().sort((a, b) => (a.scadenza || '9') < (b.scadenza || '9') ? -1 : 1);
+  // Credits
+  const warn = cfg.expiry_warning_days || 5;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const cr = (S.credits || []).slice().sort((a, b) => (a.expires || '9') < (b.expires || '9') ? -1 : 1);
   const crRows = cr.map(c => {
-    const giorniA = c.scadenza ? Math.round((new Date(c.scadenza + 'T00:00:00') - oggi) / 864e5) : null;
-    const ricarica = (c.tipo_scadenza || '').includes('ricarica');
+    const daysLeft = c.expires ? Math.round((new Date(c.expires + 'T00:00:00') - today) / 864e5) : null;
+    const renews = (c.expiry_type || '') === 'renews';
     let st;
-    if (giorniA != null && giorniA < 0) st = status('critical', '✕', ricarica ? 'data passata, da aggiornare' : 'scaduti');
-    else if (c.totale && c.residuo / c.totale < 0.1) st = status('serious', '■', 'quasi finiti');
-    else if (!ricarica && giorniA != null && giorniA <= soglia) st = status('warning', '▲', `scadono tra ${giorniA} g: usali`);
-    else if (giorniA == null) st = status('good', '●', ricarica ? 'si ricarica' : 'nessuna scadenza');
-    else st = status('good', '●', ricarica ? `si ricarica tra ${giorniA} g` : `scadono tra ${giorniA} g`);
-    const res = `${nf(c.residuo, 2)}${c.totale ? ' / ' + nf(c.totale, 0) : ''} ${c.unita || ''}`;
+    if (daysLeft != null && daysLeft < 0) st = status('critical', '✕', renews ? 'date passed, update it' : 'expired');
+    else if (c.total && c.remaining / c.total < 0.1) st = status('serious', '■', 'almost used up');
+    else if (!renews && daysLeft != null && daysLeft <= warn) st = status('warning', '▲', `expires in ${daysLeft} d: use them`);
+    else if (daysLeft == null) st = status('good', '●', renews ? 'renews' : 'no expiry');
+    else st = status('good', '●', renews ? `renews in ${daysLeft} d` : `expires in ${daysLeft} d`);
+    const left = `${nf(c.remaining, 2)}${c.total ? ' / ' + nf(c.total, 0) : ''} ${c.unit || ''}`;
     return el('tr', {},
-      el('td', {}, c.servizio, el('div', { class: 'sub' }, c.nota || '')),
-      el('td', { class: 'n' }, res),
-      el('td', {}, st, el('div', { class: 'sub' }, c.scadenza ? new Date(c.scadenza + 'T00:00:00').toLocaleDateString('it-IT') : '')),
-      el('td', { class: 'sub' }, (c.fonte === 'automatico' ? 'auto · ' : 'a mano · ') + quando(c.aggiornato)));
+      el('td', {}, c.service, el('div', { class: 'sub' }, c.note || '')),
+      el('td', { class: 'n' }, left),
+      el('td', {}, st, el('div', { class: 'sub' }, c.expires ? new Date(c.expires + 'T00:00:00').toLocaleDateString('en-GB') : '')),
+      el('td', { class: 'sub' }, (c.source === 'auto' ? 'auto · ' : 'manual · ') + when(c.updated_at)));
   });
-  $('crediti').replaceChildren(el('thead', {}, el('tr', {}, th('Servizio'), th('Residuo', 1), th('Scadenza'), th('Aggiornato'))),
-    el('tbody', {}, crRows.length ? crRows : el('tr', {}, el('td', { colSpan: 4, class: 'sub' }, 'Nessun credito registrato.'))));
+  $('credits').replaceChildren(el('thead', {}, el('tr', {}, th('Service'), th('Remaining', 1), th('Expiry'), th('Updated'))),
+    el('tbody', {}, crRows.length ? crRows : el('tr', {}, el('td', { colSpan: 4, class: 'sub' }, 'No credits recorded.'))));
 
   // PC
-  const nv = p.gpu_nvidia || [];
+  const nv = p.nvidia_gpus || [];
   $('pc').replaceChildren(
-    el('p', { class: 'note', style: 'margin-top:8px' }, `${p.cpu || '?'} · ${p.core || '?'} core · ${nf(p.ram_gb, 0)} GB di RAM · ${p.sistema || ''}`),
-    el('p', { class: 'note' }, nv.length ? `GPU NVIDIA: ${nv.map(g => `${g.nome} (${nf(g.vram_gb)} GB)`).join(', ')}. I lavori che ci stanno girano qui.`
-      : `Nessuna GPU NVIDIA${(p.altre_gpu || []).length ? ' (c\'è ' + p.altre_gpu.join(', ') + ', senza CUDA)' : ''}: i lavori che chiedono CUDA vanno su Kaggle.`));
+    el('p', { class: 'note', style: 'margin-top:8px' }, `${p.cpu || '?'} · ${p.cores || '?'} cores · ${nf(p.ram_gb, 0)} GB of RAM · ${p.system || ''}`),
+    el('p', { class: 'note' }, nv.length ? `NVIDIA GPU: ${nv.map(g => `${g.name} (${nf(g.vram_gb)} GB)`).join(', ')}. Jobs that fit run here.`
+      : `No NVIDIA GPU${(p.other_gpus || []).length ? ' (there is ' + p.other_gpus.join(', ') + ', without CUDA)' : ''}: jobs that need CUDA go to Kaggle.`));
   const cache = Object.entries(S.cache || {});
-  const coda = Object.entries(S.coda || {});
+  const queue = Object.entries(S.queue || {});
   $('cache').replaceChildren(
-    el('p', { class: 'note', style: 'margin-top:8px' }, cache.length ? 'In cache: ' + cache.map(([t, c]) => `${t} (${nf((c.metriche || {}).gb, 1)} GB, ${quando(c.creata)})`).join(', ') + '.' : 'Nessuna cache: ogni lancio installa e scarica da capo.'),
-    el('p', { class: 'note' }, coda.length ? 'In coda: ' + coda.map(([t, n]) => `${n} lavori per ${t}`).join(', ') + '. Partono insieme con ko.py coda lancia.' : 'Coda vuota.'));
+    el('p', { class: 'note', style: 'margin-top:8px' }, cache.length ? 'Cached: ' + cache.map(([t, c]) => `${t} (${nf((c.metrics || {}).gb, 1)} GB, ${when(c.created_at)})`).join(', ') + '.' : 'No cache: every run installs and downloads from scratch.'),
+    el('p', { class: 'note' }, queue.length ? 'Queued: ' + queue.map(([t, n]) => `${n} ${n === 1 ? 'job' : 'jobs'} for ${t}`).join(', ') + '. They start together with ko.py queue launch.' : 'Queue empty.'));
 }
 
 function tick() {
-  document.querySelectorAll('[data-t0]').forEach(e => { e.textContent = durata((Date.now() - new Date(e.dataset.t0)) / 1000); });
+  document.querySelectorAll('[data-t0]').forEach(e => { e.textContent = duration((Date.now() - new Date(e.dataset.t0)) / 1000); });
 }
 
-async function aggiorna() {
+async function refresh() {
   try {
-    const r = await fetch('/api/stato', { cache: 'no-store' });
+    const r = await fetch('/api/state', { cache: 'no-store' });
     render(await r.json());
     $('dot').classList.remove('off');
-    $('agg').textContent = 'aggiornato alle ' + new Date().toLocaleTimeString('it-IT');
+    $('updated').textContent = 'updated at ' + new Date().toLocaleTimeString('en-GB');
   } catch (e) {
     $('dot').classList.add('off');
-    $('agg').textContent = 'dashboard non raggiungibile: rilancia python ko.py apri';
+    $('updated').textContent = 'dashboard unreachable: restart it with python ko.py open';
   }
 }
-aggiorna();
-setInterval(aggiorna, 5000);
+refresh();
+setInterval(refresh, 5000);
 setInterval(tick, 1000);
 </script>
 </body>

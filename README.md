@@ -1,111 +1,139 @@
+<div align="center">
+
 # kaggle-offload
 
-**Una skill per Claude Code che porta il lavoro pesante sulle GPU gratuite di Kaggle quando il tuo PC non ce la fa, e ti mostra quanto consumi, quanto vai veloce e quanto risparmi.**
+**Run heavy AI jobs on Kaggle's free GPUs when your own machine can't, and see exactly what you use.**
 
-Kaggle dà circa **30 ore di GPU a settimana, gratis**, a chiunque si iscriva e verifichi il telefono: una NVIDIA Tesla T4 da 16 GB, sessioni fino a 12 ore. Non è una prova di un mese, si ricaricano ogni settimana. In tanti non lo sanno, e lasciano lavori di AI sulla CPU del portatile per ore. Questa skill decide da sola dove far girare un lavoro, lo lancia su Kaggle, aspetta e riporta i risultati.
+A skill for [Claude Code](https://claude.com/claude-code) · about 30 free GPU hours every week · no GPU needed on your PC
 
-![La dashboard locale di kaggle-offload](docs/dashboard.png)
+[![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f)](LICENSE)
+![Python 3](https://img.shields.io/badge/python-3-3776ab)
+![Claude Code skill](https://img.shields.io/badge/Claude%20Code-skill-d97757)
+![Kaggle T4](https://img.shields.io/badge/Kaggle-Tesla%20T4-20beff)
 
-> **In English.** A Claude Code skill that checks your machine and the job, decides whether to run it locally or on Kaggle's free weekly GPU quota (about 30 h of Tesla T4), launches it, batches similar jobs, caches packages and model weights on Kaggle, and opens a local dashboard with quota, speed and estimated savings. Docs and code comments are in Italian; issues and pull requests in English are welcome.
+[Quick start](#quick-start) · [How it works](#how-it-works) · [Templates](#templates) · [Contributing](CONTRIBUTING.md)
 
-## Quanto cambia
+<br>
 
-Lo stesso calcolo (moltiplicazioni di matrici) misurato con `ko.py bench`, il 26/11/2026:
+<img src="docs/benchmark.svg" alt="Same benchmark on a laptop and on Kaggle: laptop 1x, Kaggle CPU 2.6x, Kaggle T4 GPU 66x in fp32 and 405x in fp16" width="840">
 
-| Macchina | GFLOPS | Rispetto al portatile |
-|---|---:|---:|
-| Portatile, Ryzen 5 3550H senza GPU NVIDIA | 53 | 1× |
-| Kaggle, solo CPU (Xeon 4 core) | 139 | 2,6× |
-| Kaggle, GPU T4, precisione piena (fp32) | 3.507 | 66× |
-| Kaggle, GPU T4, mezza precisione (fp16, quella dei modelli AI) | 21.470 | 405× |
+</div>
 
-Il 405× vale per quel calcolo, non per ogni lavoro. Spesso la differenza è più semplice: sul PC il modello non parte, su Kaggle sì.
+## Why
 
-## Da dove nasce
+Kaggle gives anyone with a verified phone number **about 30 hours of NVIDIA Tesla T4 time every week, for free**. It is not a one-month trial: the quota refills every week. Most people don't know, and leave AI jobs crawling on their laptop's CPU for hours.
 
-Dal limite dell'hardware. Il PC su cui è nata è un portatile con un Ryzen 5, 16 GB di RAM e una Radeon integrata: niente GPU NVIDIA, quindi niente CUDA, su cui gira quasi tutto il software di AI open source. In più, su Windows, Smart App Control bloccava le librerie native di un modello di sintesi vocale: non partiva proprio.
+This skill was born on a laptop with a Ryzen 5, 16 GB of RAM and integrated graphics: no NVIDIA GPU, so no CUDA, which nearly all open-source AI runs on. A text-to-speech model wouldn't even start. The same job on Kaggle produced six audio clips in 5 minutes 20 seconds, at no cost. kaggle-offload turns that one-off experiment into a routine: it decides where a job should run, runs it, and keeps count. The whole story, with real numbers, is in [`DEVLOG.md`](DEVLOG.md).
 
-La stessa prova spostata su Kaggle ha prodotto 6 audio in 5 minuti e 20 secondi, a costo zero. Da lì l'idea: non rinunciare a un modello perché il PC non ce la fa, ma prendere in prestito la potenza che serve, quando serve, e vedere quanta se ne usa. L'evoluzione passo per passo, con i numeri veri, è in [`DIARIO.md`](DIARIO.md).
+## What it does
 
-## Cosa fa
+- **Decides where a job should run**: on your PC, on Kaggle CPU (no quota used), on a Kaggle GPU or TPU, or it tells you a paid service would be needed. It looks at your hardware, the memory the model needs and the quota you have left.
+- **Runs it on Kaggle and waits**, then downloads the outputs and logs everything: queue time, session length, quota used, setup time versus compute time.
+- **Batches similar jobs** into a single run, so installing packages and loading the model are paid once.
+- **Caches packages and model weights on Kaggle**, built on CPU only. On the same batch, setup time went from 97 to 71 seconds.
+- **Benchmarks** your PC against Kaggle CPU and GPU with the same computation.
+- **Tracks your credits** across AI services, with expiry dates, so none go to waste.
+- **Shows it all on a local dashboard**: weekly quota, running jobs with a live timer, speed, estimated savings, credits.
 
-- **Decide dove far girare un lavoro**: sul PC, su Kaggle in sola CPU (non consuma quota), su Kaggle con GPU o TPU, oppure ti dice che servirebbe un servizio a pagamento. Guarda l'hardware del PC, la memoria che serve al modello e la quota rimasta.
-- **Lancia su Kaggle e aspetta il risultato**, scarica le uscite e registra tutto: attesa, durata della sessione, quota consumata, tempo di preparazione contro tempo di calcolo.
-- **Raggruppa i lavori dello stesso tipo** in un solo lancio: installazione e caricamento del modello si pagano una volta.
-- **Tiene in cache** su Kaggle i pacchetti e i pesi dei modelli, preparati in sola CPU. Sullo stesso lotto la preparazione è scesa da 97 a 71 secondi.
-- **Misura la velocità** con un benchmark: stessi calcoli su PC, Kaggle CPU e Kaggle GPU.
-- **Tiene il conto dei crediti** di tutti i servizi AI che usi, con le scadenze, così non ne lasci scadere nessuno.
-- **Mostra tutto in una dashboard locale**: quota della settimana, lanci in corso con il tempo che scorre, velocità, risparmio stimato, crediti.
+## How it works
 
-## Cosa ci puoi fare
+```mermaid
+flowchart LR
+    A[Your job] --> B{decide}
+    B -->|fits your PC| C[Run locally]
+    B -->|no GPU needed| D[Kaggle CPU<br/>no quota used]
+    B -->|needs a GPU| E[Kaggle GPU T4<br/>weekly quota]
+    B -->|too big for a T4| F[Paid service<br/>you choose]
+    D --> G[Outputs downloaded<br/>run logged]
+    E --> G
+    G --> H[Local dashboard]
+```
 
-Le ore sono tue, l'uso lo decidi tu. I casi più comuni:
+Jobs are pushed as private Kaggle kernels through the official Kaggle CLI. Your token stays where you put it: the skill never reads it.
 
-- far girare modelli open che sul PC non partono: immagini, sintesi vocale, modelli linguistici piccoli e medi;
-- trascrivere ore di audio e video con Whisper;
-- addestrare o rifinire un modello sui tuoi dati, per esempio con LoRA;
-- elaborare migliaia di testi o immagini in un colpo;
-- lasciare a Kaggle i lavori lunghi che la GPU non la usano (conversioni, elaborazioni su tanti file): non consumano quota e il PC resta libero.
+## Quick start
 
-## Installazione
-
-Serve Python 3. `ko.py` usa solo la libreria standard, più la Kaggle CLI.
+You need Python 3 and a Kaggle account. `ko.py` uses only the standard library plus the Kaggle CLI.
 
 ```bash
 git clone https://github.com/fracabu/kaggle-offload ~/.claude/skills/kaggle-offload
 pip install kaggle
 ```
 
-Poi, una volta sola:
+Then, once:
 
-1. Iscriviti su [kaggle.com](https://www.kaggle.com) e **verifica il numero di telefono** nelle impostazioni dell'account: senza, GPU e internet nei notebook non si accendono.
-2. Nelle impostazioni dell'account crea un token API e mettilo dove indica Kaggle (`~/.kaggle/`).
-3. `python ~/.claude/skills/kaggle-offload/scripts/ko.py setup`: se risponde `"pronto": true` sei a posto.
+1. Sign up at [kaggle.com](https://www.kaggle.com) and **verify your phone number** in your account settings. Without it, GPUs and internet access stay off in notebooks.
+2. In your account settings, create an API token and place it where Kaggle tells you (`~/.kaggle/`).
+3. Run `python ~/.claude/skills/kaggle-offload/scripts/ko.py setup`. If it answers `"ready": true`, you're set.
 
-Provata su Windows 11. Il codice è pensato anche per macOS e Linux, ma lì non è ancora stato collaudato: se la provi, raccontacelo in una issue.
+Tested on Windows 11. The code is meant to work on macOS and Linux too, but it hasn't been tested there yet: if you try it, please open an issue.
 
-## Come si usa
+## Usage
 
-**Con Claude Code** basta chiedere: "fallo girare su Kaggle", "sul PC non parte", "ci mette una vita sulla CPU", "quanta quota mi resta?". La skill si attiva anche da sola quando un lavoro di AI sta per girare su un PC senza GPU NVIDIA. Le istruzioni per Claude sono in [`SKILL.md`](SKILL.md).
+**With Claude Code**, just ask: *"run this on Kaggle"*, *"it won't start on my PC"*, *"this is taking forever on the CPU"*, *"how much GPU quota do I have left?"*. The skill also steps in on its own when an AI job is about to run on a machine without an NVIDIA GPU. Instructions for Claude are in [`SKILL.md`](SKILL.md).
 
-**Da riga di comando**, con `ko.py` in `scripts/`:
+**From the command line**, with `ko.py` in `scripts/`:
 
-| Comando | Cosa fa |
+| Command | What it does |
 |---|---|
-| `ko.py apri` | avvia la dashboard e la apre nel browser |
-| `ko.py setup` | controlla CLI, token, quota e hardware |
-| `ko.py decidi --vram 8 --ore 0.5` | dove conviene far girare un lavoro GPU |
-| `ko.py decidi --solo-cpu --ore 2` | lo stesso per un lavoro solo CPU |
-| `ko.py run --template qwen-tts --jobs lavori.json` | lancia un template |
-| `ko.py run --script mio.py --acc gpu` | lancia uno script tuo |
-| `ko.py coda aggiungi qwen-tts --file lavori.json` · `ko.py coda lancia qwen-tts` | raggruppa e lancia |
-| `ko.py cache qwen-tts` | prepara la cache di un template (sola CPU) |
-| `ko.py bench` | benchmark PC contro Kaggle CPU e GPU |
-| `ko.py crediti` · `ko.py crediti imposta ...` | conto dei crediti |
-| `ko.py quota` | quota Kaggle della settimana |
+| `ko.py open` | start the dashboard and open it in your browser |
+| `ko.py setup` | check the CLI, token, quota and hardware |
+| `ko.py decide --vram 8 --hours 0.5` | where a GPU job should run |
+| `ko.py decide --cpu-only --hours 2` | the same for a CPU-only job |
+| `ko.py run --template qwen-tts --jobs jobs.json` | run a template |
+| `ko.py run --script my_job.py --acc gpu` | run your own script |
+| `ko.py queue add qwen-tts --file jobs.json` · `ko.py queue launch qwen-tts` | batch jobs and run them together |
+| `ko.py cache qwen-tts` | build a template's cache on Kaggle (CPU only) |
+| `ko.py bench` | benchmark your PC against Kaggle CPU and GPU |
+| `ko.py credits` · `ko.py credits set ...` | credits across services |
+| `ko.py quota` | this week's Kaggle quota |
 
-## Template
+## The dashboard
 
-Un template è un lavoro già provato su Kaggle, pronto da rilanciare a lotti: una cartella in `templates/` con `main.py` e `template.json`.
+`ko.py open` serves a single-page dashboard on `127.0.0.1`, starting from port 8790. It refreshes every few seconds and works in light and dark mode.
 
-| Template | Cosa fa | Stato |
+<img src="docs/dashboard.png" alt="kaggle-offload dashboard: weekly GPU quota, estimated savings, time your PC was left free, speed per machine, GPU minutes per day, runs, credits" width="840">
+
+The "savings" figure is an equivalence: GPU hours times the on-demand price of a T4 on a cloud service. It isn't money you actually saved if you wouldn't have run the job otherwise.
+
+## Templates
+
+A template is a job already tested on Kaggle, ready to run again in batches: a folder in `templates/` with `main.py` and `template.json`.
+
+| Template | What it does | Status |
 |---|---|---|
-| `bench` | benchmark GFLOPS su CPU e GPU | collaudato |
-| `cache` | salva su Kaggle pacchetti pip e pesi Hugging Face di un altro template | collaudato |
-| `qwen-tts` | Qwen3-TTS 1.7B: voci da una descrizione e cloni | collaudato |
+| `bench` | GFLOPS benchmark on CPU and GPU | tested |
+| `cache` | stores another template's pip packages and Hugging Face weights on Kaggle | tested |
+| `qwen-tts` | Qwen3-TTS 1.7B: voices designed from a description, and voice clones | tested |
 
-Mancano molti modelli utili: Whisper, Flux e SDXL, addestramento LoRA, upscaling. **È il modo più semplice per contribuire**: vedi [`CONTRIBUTING.md`](CONTRIBUTING.md).
+Many useful models are still missing: Whisper, SDXL and Flux, LoRA training, upscaling, a small LLM for batch text work. **A new template is the easiest way to contribute**: see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-## Dati e riservatezza
+## What fits on a T4
 
-I dati della skill (registro dei lanci, quota, crediti, benchmark) stanno in `~/.kaggle-offload/` sul tuo PC, mai nel repo. Il token Kaggle resta dove l'hai messo: la skill non lo legge, usa la CLI. I kernel sono privati, ma codice e dati passano dai server di Kaggle (Google): non mandarci dati personali o riservati.
+A session gives you up to two Tesla T4 cards with 16 GB each and about 30 GB of RAM. Rule of thumb for model weights: about 2 GB per billion parameters in fp16, 1 GB in 8-bit, 0.6 GB in 4-bit, plus 20-30% headroom.
 
-Il "risparmio" della dashboard è un'equivalenza: ore di GPU per il prezzo a consumo di una T4 su un servizio cloud. Non è denaro risparmiato davvero se senza Kaggle quel lavoro non l'avresti fatto.
+| Job | Examples | On a T4 |
+|---|---|---|
+| Speech to text | Whisper large-v3, large-v3-turbo | great fit |
+| Text to speech | Qwen3-TTS (tested), Kokoro, XTTS | great fit |
+| Text models | Qwen3, Llama 3.1, Gemma 3, Mistral | up to ~8B comfortably; 14B and beyond quantized, split across both cards |
+| Images | SDXL, SD 3.5 Medium | good; Flux only quantized, and slow |
+| Fine-tuning | LoRA on SDXL | doable with low-memory settings |
+| Video | Wan 2.2 5B, LTX-Video | short clips, slowly; larger models are borderline |
 
-## Contribuire
+The T4 dates from 2018: no bf16 and no FlashAttention 2, so recent models run in fp16. Only the TTS row has been tested with this skill so far; the rest are estimates.
 
-Template nuovi, prove su macOS e Linux, correzioni, idee: tutto è benvenuto. Parti da [`CONTRIBUTING.md`](CONTRIBUTING.md).
+## Privacy and limits
 
-## Licenza
+- Your code and data go through Kaggle's (Google's) servers. Kernels are private, but **don't send personal or confidential data**. If you need privacy, the model has to run on your own machine.
+- GPU quota is about 30 hours a week (`ko.py quota` shows the exact figure and refill date), TPU 20 hours. Sessions last up to 12 hours (9 on TPU).
+- Quota is counted from the moment a session starts, setup included. That's why the skill batches jobs.
+- The skill's own data (run log, quota, credits, benchmarks) lives in `~/.kaggle-offload/` on your machine, never in the repo.
 
-[MIT](LICENSE).
+## Contributing
+
+New templates, tests on macOS and Linux, fixes and ideas are all welcome. Start with [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+## License
+
+[MIT](LICENSE) · made by [@fracabu](https://github.com/fracabu)

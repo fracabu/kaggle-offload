@@ -1,6 +1,6 @@
-# kaggle-offload: costruttore di cache. Gira in sola CPU (fuori quota).
-# Mette in /kaggle/working i pacchetti pip che mancano all'immagine Kaggle (come wheel) e i pesi dei
-# modelli Hugging Face. I lanci successivi montano questo output come kernel_source e non riscaricano.
+# kaggle-offload: cache builder. Runs on CPU only (outside the quota).
+# Puts in /kaggle/working the pip packages the Kaggle image lacks (as wheels) and the weights of the
+# Hugging Face models. Later runs mount this output as a kernel_source and do not download again.
 import json
 import os
 import subprocess
@@ -17,14 +17,14 @@ W = f'{OUT}/wheels'
 os.makedirs(W, exist_ok=True)
 pins = []
 if J.get('pip'):
-    # Solo cio' che l'immagine Kaggle non ha gia': lo dice pip stesso con --dry-run --report.
+    # Only what the Kaggle image does not already have: pip itself says so with --dry-run --report.
     subprocess.run([sys.executable, '-m', 'pip', 'install', '--dry-run', '--quiet', '--report',
                     '/tmp/pip-report.json', *J['pip']], check=True)
     rep = json.load(open('/tmp/pip-report.json'))
     pins = [f"{i['metadata']['name']}=={i['metadata']['version']}" for i in rep.get('install', [])]
     if pins:
         subprocess.run([sys.executable, '-m', 'pip', 'wheel', '--no-deps', '-q', '-w', W, *pins], check=True)
-m['pacchetti'] = pins
+m['packages'] = pins
 m['pip_s'] = round(time.time() - t0, 1)
 
 t1 = time.time()
@@ -35,13 +35,14 @@ for repo in J.get('hf', []):
 m['hf_s'] = round(time.time() - t1, 1)
 
 
-def dimensione(cartella):
-    return sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(cartella) for f in fs)
+def folder_size(folder):
+    return sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(folder) for f in fs)
 
 
-m['gb'] = round(dimensione(OUT) / 2 ** 30, 2)
+m['gb'] = round(folder_size(OUT) / 2 ** 30, 2)
+# ko-cache.json is how later runs find this cache under /kaggle/input: keep the name.
 json.dump({'template': J['template'], 'pip': pins, 'hf': J.get('hf', [])}, open(f'{OUT}/ko-cache.json', 'w'))
-m['preparazione_s'] = 0
-m['calcolo_s'] = round(time.time() - t0, 1)
-json.dump(m, open(f'{OUT}/metriche.json', 'w'), indent=1)
+m['prep_s'] = 0
+m['compute_s'] = round(time.time() - t0, 1)
+json.dump(m, open(f'{OUT}/metrics.json', 'w'), indent=1)
 print(json.dumps(m, indent=1))
