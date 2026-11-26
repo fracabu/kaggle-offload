@@ -43,9 +43,25 @@ Come si evolve la skill, con i numeri veri. È anche la fonte dei post.
   bloccato dal controllo dei permessi. È giusto: le chiavi le collega l'utente, la skill non va a
   cercarle.
 
+## 26/11/2026 — collaudo di cache e Qwen-TTS
+
+- **Cache:** 10 pacchetti pip e i due modelli Qwen, 8,52 GB salvati su Kaggle in 56 s di sessione in
+  sola CPU. Zero quota.
+- **Qwen-TTS con la cache:** stesse 6 battute della prova del mattino, nello stesso lancio.
+
+  | | Mattino (senza cache) | Sera (con cache) |
+  |---|---|---|
+  | Installazione | 38,4 s | 24,9 s |
+  | Caricamento modelli | 58,6 s | 46,6 s |
+  | Preparazione totale | 97 s | 71 s (−26%) |
+  | Calcolo | 145,5 s | 131,6 s |
+  | Lancio intero | 320 s | 261 s (−18%) |
+
+  Sessione 274 s, 0,08 h di GPU. 46,6 s di audio prodotti: circa 2,8 s di calcolo per secondo di audio.
+- **Lezione:** la cache taglia la preparazione ma non la azzera. I 25 s che restano sono pip che
+  installa 10 wheel dal disco (dentro c'è anche gradio, l'interfaccia web, che arriva con le dipendenze di qwen-tts); il caricamento resta
+  lettura dei pesi. Con un lotto grande pesano sempre meno: è lì che si guadagna.
+
 ## Da fare
 
-- **Collaudo di `cache` e `qwen-tts` su Kaggle** (rimandato il 26/11). Prima `KO cache qwen-tts`
-  (sola CPU, fuori quota, circa 8 GB di pesi), poi un lancio di `qwen-tts` che usi la cache: qualche
-  minuto di GPU. Se va, `collaudato: true` nei due `template.json`.
-- Provare anche `coda` (aggiungi, lancia) e `run --script`, mai lanciati finora.
+- Provare `coda` (aggiungi, lancia) e `run --script`, mai lanciati finora.

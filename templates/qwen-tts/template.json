@@ -5,6 +5,6 @@
  "unita": "secondi di audio",
  "cache_pip": ["qwen-tts"],
  "cache_hf": ["Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign", "Qwen/Qwen3-TTS-12Hz-1.7B-Base"],
- "collaudato": false,
- "origine": "prova del 26/11/2026: 6 audio in 5 min 20 s su T4, con installazione e caricamento (97 s) a ogni lancio"
+ "collaudato": true,
+ "origine": "prova del 26/11/2026: 6 audio in 5 min 20 s su T4, 97 s di preparazione; con la cache, stesso lotto in 4 min 21 s e 71 s di preparazione"
 }
